@@ -82,7 +82,7 @@ function renderHeader() {
   // Pure CSS classes — no checkbox to sync
   pill.classList.toggle('on',  on);
   pill.classList.toggle('off', !on);
-  label.textContent = on ? 'Blocking: ON' : 'Blocking: OFF';
+  label.textContent = on ? 'Always Block: ON' : 'Always Block: OFF';
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -96,14 +96,32 @@ function setupBlockToggle() {
 
     const newVal = !state.alwaysBlock;
 
-    // Optimistically update the UI immediately — feels instant
-    state.alwaysBlock = newVal;
-    renderHeader();
+    // Turning OFF always-block requires password confirmation
+    if (!newVal) {
+      confirmWithPassword(
+        '🔒 Disable Always-Block',
+        'Enter your master password to turn off always-block mode.',
+        async () => {
+          state.alwaysBlock = false;
+          renderHeader();
+          const result = await send({ type: 'SET_ALWAYS_BLOCK', enabled: false });
+          if (result && result.error) {
+            state.alwaysBlock = true;
+            renderHeader();
+            alert(result.error);
+          }
+        },
+        'Disable'
+      );
+      return;
+    }
 
-    const result = await send({ type: 'SET_ALWAYS_BLOCK', enabled: newVal });
+    // Turning ON — no password needed
+    state.alwaysBlock = true;
+    renderHeader();
+    const result = await send({ type: 'SET_ALWAYS_BLOCK', enabled: true });
     if (result && result.error) {
-      // Revert on failure
-      state.alwaysBlock = !newVal;
+      state.alwaysBlock = false;
       renderHeader();
       alert(result.error);
     }
@@ -133,10 +151,11 @@ function setupTabs() {
 // title   — heading text
 // body    — instruction paragraph
 // callback — async fn called only if password is verified
-function confirmWithPassword(title, body, callback) {
+function confirmWithPassword(title, body, callback, btnLabel = 'Confirm') {
   pendingPasswordCallback = callback;
   document.getElementById('reveal-modal-title').textContent = title;
   document.getElementById('reveal-modal-body').textContent  = body;
+  document.getElementById('btn-reveal-submit').textContent  = btnLabel;
   document.getElementById('reveal-pw').value = '';
   document.getElementById('reveal-error').classList.remove('visible');
   showModal('reveal');
@@ -156,7 +175,8 @@ function setupSitesTab() {
     confirmWithPassword(
       '🔒 Reveal Blocklist',
       'Enter your master password to view the list of blocked sites.',
-      () => { sitesRevealed = true; renderSitesList(); }
+      () => { sitesRevealed = true; renderSitesList(); },
+      'Show Sites'
     );
   });
 
@@ -291,7 +311,8 @@ function saveSchedule() {
       if (result.error) { alert(result.error); return; }
       state.schedule = schedule;
       flashButton('btn-save-schedule', 'Saved!');
-    }
+    },
+    'Save'
   );
 }
 
