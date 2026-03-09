@@ -2,10 +2,6 @@
 
 // ─────────────────────────────────────────────────────────────
 // QUOTE
-// Approach: pick and render a built-in quote instantly (synchronous),
-// then silently try to pull custom quotes from the service worker.
-// If that fails or times out (Incognito, cold-start, etc.) the
-// built-in quote is already visible — nothing breaks.
 // ─────────────────────────────────────────────────────────────
 
 function pickRandom(arr) {
@@ -22,23 +18,8 @@ function showBuiltInQuote() {
   renderQuote(pickRandom(BUILT_IN_QUOTES));
 }
 
-async function tryUpgradeWithCustomQuote() {
-  // Race the sendMessage against a 1.5 s timeout so we never hang.
-  // Works even if the service worker is sleeping or unavailable (Incognito).
-  let result = null;
-  try {
-    result = await Promise.race([
-      chrome.runtime.sendMessage({ type: 'GET_STATE' }),
-      new Promise(resolve => setTimeout(() => resolve(null), 1500))
-    ]);
-  } catch {
-    return; // extension not reachable — keep the built-in quote
-  }
-
-  const customQuotes = (result && result.customQuotes) || [];
-  if (customQuotes.length === 0) return; // nothing to add
-
-  // Re-pick from the combined pool so custom quotes get a fair chance
+function upgradeWithCustomQuote(customQuotes) {
+  if (!customQuotes || customQuotes.length === 0) return;
   renderQuote(pickRandom([...BUILT_IN_QUOTES, ...customQuotes]));
 }
 
@@ -46,29 +27,47 @@ async function tryUpgradeWithCustomQuote() {
 // BLOCKED DOMAIN
 // ─────────────────────────────────────────────────────────────
 
-function loadBlockedDomain() {
+function getBlockedDomain() {
   const params = new URLSearchParams(window.location.search);
   const site   = params.get('site');
-  document.getElementById('blocked-domain').textContent =
-    site ? decodeURIComponent(site) : 'this site';
+  const domain = site ? decodeURIComponent(site) : 'this site';
+  document.getElementById('blocked-domain').textContent = domain;
+  return domain;
+}
+
+// ─────────────────────────────────────────────────────────────
+// HARD MODE COUNTDOWN
+// ─────────────────────────────────────────────────────────────
+
+function startHardCountdown(hardModeUntil) {
+  const section   = document.getElementById('hard-section');
+  const countdown = document.getElementById('hard-countdown');
+  section.style.display = 'block';
+
+  function tick() {
+    const remaining = Math.max(0, hardModeUntil - Date.now());
+    const totalSecs = Math.floor(remaining / 1000);
+    const h = Math.floor(totalSecs / 3600);
+    const m = Math.floor((totalSecs % 3600) / 60);
+    const s = totalSecs % 60;
+    if (h > 0) {
+      countdown.textContent =
+        `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    } else {
+      countdown.textContent =
+        `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    }
+  }
+
+  tick();
+  setInterval(tick, 1000);
 }
 
 // ─────────────────────────────────────────────────────────────
 // POMODORO COUNTDOWN
 // ─────────────────────────────────────────────────────────────
 
-async function loadPomodoroCountdown() {
-  let pomodoroState;
-  try {
-    const result = await Promise.race([
-      chrome.runtime.sendMessage({ type: 'GET_STATE' }),
-      new Promise(resolve => setTimeout(() => resolve(null), 2000))
-    ]);
-    pomodoroState = result && result.pomodoro;
-  } catch {
-    return;
-  }
-
+function startPomoCountdown(pomodoroState) {
   if (!pomodoroState || !pomodoroState.running) return;
 
   const section   = document.getElementById('pomo-section');
@@ -93,18 +92,70 @@ async function loadPomodoroCountdown() {
 }
 
 // ─────────────────────────────────────────────────────────────
+// UNBLOCK BUTTON
+// ─────────────────────────────────────────────────────────────
+
+function setupUnblockButton(domain, sessionUnlocked, hardActive) {
+  // Only show when session is unlocked and Hard Mode is not forcing the block
+  if (!sessionUnlocked || hardActive || domain === 'this site') return;
+
+  const section = document.getElementById('unblock-section');
+  const btn     = document.getElementById('unblock-btn');
+  section.style.display = 'block';
+
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    btn.textContent = 'Removing…';
+    try {
+      const result = await chrome.runtime.sendMessage({ type: 'REMOVE_SITE', domain });
+      if (result && result.success) {
+        btn.textContent = 'Unblocked!';
+        // Redirect back to the site after a brief moment
+        setTimeout(() => {
+          window.location.href = `https://${domain}`;
+        }, 600);
+      } else {
+        btn.textContent = 'Failed — try from the popup';
+        btn.disabled = false;
+      }
+    } catch {
+      btn.textContent = 'Failed — try from the popup';
+      btn.disabled = false;
+    }
+  });
+}
+
+// ─────────────────────────────────────────────────────────────
 // BOOT
 // ─────────────────────────────────────────────────────────────
 
-document.addEventListener('DOMContentLoaded', () => {
-  loadBlockedDomain();
+document.addEventListener('DOMContentLoaded', async () => {
+  const domain = getBlockedDomain();
 
   // 1. Show a built-in quote immediately — works in Incognito, offline, everywhere
   showBuiltInQuote();
 
-  // 2. Asynchronously try to mix in custom quotes (non-blocking)
-  tryUpgradeWithCustomQuote();
+  // 2. Single GET_STATE call (2 s timeout) — drives custom quotes, Hard Mode, Pomodoro, Unblock btn
+  let state = null;
+  try {
+    state = await Promise.race([
+      chrome.runtime.sendMessage({ type: 'GET_STATE' }),
+      new Promise(resolve => setTimeout(() => resolve(null), 2000))
+    ]);
+  } catch {
+    // Service worker unreachable — built-in quote already visible, nothing else shown
+  }
 
-  // 3. Pomodoro countdown (best-effort)
-  loadPomodoroCountdown();
+  if (state) {
+    upgradeWithCustomQuote(state.customQuotes);
+
+    const hardActive = !!state.hardModeUntil && Date.now() < state.hardModeUntil;
+    if (hardActive) {
+      startHardCountdown(state.hardModeUntil);
+    }
+
+    startPomoCountdown(state.pomodoro);
+
+    setupUnblockButton(domain, state.sessionUnlocked, hardActive);
+  }
 });

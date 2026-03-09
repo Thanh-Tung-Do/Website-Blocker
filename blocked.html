@@ -140,6 +140,67 @@
       margin-top: 4px;
     }
 
+    /* ── Hard Mode countdown ── */
+    #hard-section {
+      display: none;
+      margin-top: 16px;
+      padding: 12px 20px;
+      background: rgba(220, 38, 38, 0.07);
+      border: 1px solid rgba(220, 38, 38, 0.2);
+      border-radius: 12px;
+    }
+
+    .hard-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: #b91c1c;
+      margin-bottom: 6px;
+    }
+
+    .hard-timer-text {
+      font-size: 28px;
+      font-weight: 700;
+      color: #dc2626;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -1px;
+    }
+
+    .hard-sublabel {
+      font-size: 12px;
+      color: #b91c1c;
+      margin-top: 4px;
+      opacity: 0.8;
+    }
+
+    /* ── Unblock button ── */
+    #unblock-section {
+      display: none;
+      margin-top: 20px;
+    }
+
+    .unblock-btn {
+      background: none;
+      border: 1px solid rgba(92, 107, 192, 0.35);
+      border-radius: 999px;
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 500;
+      padding: 7px 22px;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+    }
+
+    .unblock-btn:hover {
+      background: var(--chip-bg);
+      border-color: var(--accent);
+    }
+
+    .unblock-btn:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+
     /* ── Footer ── */
     .footer {
       margin-top: 36px;
@@ -165,6 +226,16 @@
       <p class="pomo-label">Break in</p>
       <div class="pomo-timer-text" id="pomo-countdown">--:--</div>
       <div class="pomo-phase-text" id="pomo-phase-text"></div>
+    </div>
+
+    <div id="hard-section">
+      <p class="hard-label">🔥 Hard Mode — unlocks in</p>
+      <div class="hard-timer-text" id="hard-countdown">--:--:--</div>
+      <div class="hard-sublabel">Blocking cannot be disabled until the timer ends.</div>
+    </div>
+
+    <div id="unblock-section">
+      <button class="unblock-btn" id="unblock-btn">Unblock this site</button>
     </div>
 
     <p class="footer">Website Blocker — stay focused, one session at a time.</p>
