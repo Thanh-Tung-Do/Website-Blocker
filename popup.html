@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Website Blocker</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --surface: #1e293b;
+      --surface2: #273548;
+      --border: #334155;
+      --accent: #6366f1;
+      --accent-hover: #4f46e5;
+      --danger: #ef4444;
+      --success: #22c55e;
+      --warn: #f59e0b;
+      --text: #f1f5f9;
+      --text-muted: #94a3b8;
+      --radius: 8px;
+      --tab-h: 38px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      width: 400px;
+      min-height: 520px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 13px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Header ── */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px 10px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .header-left { display: flex; align-items: center; gap: 8px; }
+
+    .logo {
+      width: 22px; height: 22px;
+      background: var(--accent);
+      border-radius: 6px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 700; color: white;
+    }
+
+    .app-title { font-weight: 700; font-size: 14px; }
+
+    .status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      display: inline-block;
+    }
+    .status-dot.active { background: var(--success); }
+
+    .header-right { display: flex; align-items: center; gap: 8px; }
+
+    .btn-icon {
+      background: none; border: none; cursor: pointer;
+      color: var(--text-muted); padding: 4px 6px;
+      border-radius: var(--radius); font-size: 14px;
+      transition: background 0.15s, color 0.15s;
+    }
+    .btn-icon:hover { background: var(--surface2); color: var(--text); }
+
+    /* ── Tabs ── */
+    .tabs {
+      display: flex;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+
+    .tab-btn {
+      flex: 1; height: var(--tab-h);
+      background: none; border: none; cursor: pointer;
+      color: var(--text-muted); font-size: 12px; font-weight: 500;
+      border-bottom: 2px solid transparent;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+    /* ── Tab panels ── */
+    .tab-panel { display: none; flex-direction: column; flex: 1; padding: 14px 16px; gap: 12px; overflow-y: auto; max-height: 440px; }
+    .tab-panel.active { display: flex; }
+
+    /* ── Common UI pieces ── */
+    label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; display: block; }
+
+    input[type="text"],
+    input[type="password"],
+    input[type="time"],
+    input[type="number"] {
+      width: 100%;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      padding: 8px 10px;
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input:focus { border-color: var(--accent); }
+    input::placeholder { color: var(--text-muted); }
+
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      gap: 6px; padding: 8px 14px;
+      border: none; border-radius: var(--radius);
+      font-size: 13px; font-weight: 500; cursor: pointer;
+      transition: opacity 0.15s, background 0.15s;
+    }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-primary { background: var(--accent); color: white; }
+    .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+    .btn-danger  { background: var(--danger); color: white; }
+    .btn-danger:hover:not(:disabled) { background: #dc2626; }
+    .btn-ghost   { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+    .btn-ghost:hover:not(:disabled) { background: var(--border); }
+    .btn-success { background: var(--success); color: white; }
+    .btn-success:hover:not(:disabled) { background: #16a34a; }
+    .btn-warn    { background: var(--warn); color: #1a1a1a; }
+    .btn-warn:hover:not(:disabled) { background: #d97706; }
+
+    .btn-full { width: 100%; }
+
+    .row { display: flex; gap: 8px; align-items: flex-end; }
+    .row .btn { flex-shrink: 0; }
+
+    /* ── Sites tab ── */
+    .site-list { display: flex; flex-direction: column; gap: 4px; }
+
+    .site-item {
+      display: flex; align-items: center; justify-content: space-between;
+      background: var(--surface2); border-radius: var(--radius);
+      padding: 8px 10px; gap: 8px;
+    }
+    .site-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+    .site-item button {
+      background: none; border: none; cursor: pointer; color: var(--text-muted);
+      font-size: 16px; line-height: 1; padding: 2px 4px; border-radius: 4px;
+    }
+    .site-item button:hover { color: var(--danger); background: rgba(239,68,68,0.1); }
+
+    .empty-msg { text-align: center; color: var(--text-muted); padding: 24px 0; font-size: 12px; }
+
+    /* ── Schedule tab ── */
+    .toggle-row { display: flex; align-items: center; justify-content: space-between; }
+
+    .toggle {
+      position: relative; display: inline-block;
+      width: 40px; height: 22px;
+    }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider {
+      position: absolute; inset: 0;
+      background: var(--border); border-radius: 22px;
+      cursor: pointer; transition: background 0.2s;
+    }
+    .toggle-slider::before {
+      content: ''; position: absolute;
+      height: 16px; width: 16px;
+      left: 3px; bottom: 3px;
+      background: white; border-radius: 50%;
+      transition: transform 0.2s;
+    }
+    .toggle input:checked + .toggle-slider { background: var(--accent); }
+    .toggle input:checked + .toggle-slider::before { transform: translateX(18px); }
+
+    .days-grid {
+      display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px;
+    }
+    .day-btn {
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 6px; color: var(--text-muted);
+      padding: 5px 0; font-size: 11px; cursor: pointer; text-align: center;
+      transition: all 0.15s;
+    }
+    .day-btn.selected {
+      background: var(--accent); border-color: var(--accent); color: white;
+    }
+
+    .time-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+    /* ── Pomodoro tab ── */
+    .pomo-timer {
+      text-align: center;
+      background: var(--surface2);
+      border-radius: 12px;
+      padding: 20px 16px;
+    }
+    .pomo-phase { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 6px; }
+    .pomo-countdown { font-size: 48px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -2px; }
+    .pomo-countdown.work   { color: #f87171; }
+    .pomo-countdown.break  { color: var(--success); }
+    .pomo-countdown.idle   { color: var(--text-muted); }
+    .pomo-sessions { font-size: 11px; color: var(--text-muted); margin-top: 6px; }
+
+    .pomo-controls { display: flex; gap: 8px; }
+
+    .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+    /* ── Settings tab ── */
+    .section-title {
+      font-size: 11px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--text-muted);
+      padding-bottom: 6px; border-bottom: 1px solid var(--border);
+    }
+
+    .quote-list { display: flex; flex-direction: column; gap: 6px; max-height: 140px; overflow-y: auto; }
+    .quote-item {
+      background: var(--surface2); border-radius: var(--radius);
+      padding: 7px 10px; display: flex; gap: 8px; align-items: flex-start;
+    }
+    .quote-item-text { flex: 1; font-size: 11px; color: var(--text-muted); line-height: 1.4; }
+    .quote-item-text em { color: var(--text); font-style: normal; font-weight: 500; }
+    .quote-item button {
+      background: none; border: none; cursor: pointer; color: var(--text-muted);
+      font-size: 14px; padding: 0 2px; flex-shrink: 0;
+    }
+    .quote-item button:hover { color: var(--danger); }
+
+    .danger-zone {
+      border: 1px solid rgba(239,68,68,0.3);
+      border-radius: var(--radius); padding: 12px;
+      background: rgba(239,68,68,0.05);
+    }
+    .danger-zone p { font-size: 11px; color: var(--text-muted); margin-bottom: 8px; line-height: 1.4; }
+
+    /* ── Modal overlay ── */
+    #modal-overlay {
+      display: none;
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.75);
+      z-index: 100;
+      align-items: center; justify-content: center;
+    }
+    #modal-overlay.visible { display: flex; }
+
+    .modal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px 20px;
+      width: 340px;
+      display: flex; flex-direction: column; gap: 14px;
+    }
+    .modal h2 { font-size: 16px; font-weight: 700; }
+    .modal p  { font-size: 12px; color: var(--text-muted); line-height: 1.5; }
+
+    .error-msg {
+      font-size: 11px; color: var(--danger);
+      background: rgba(239,68,68,0.1);
+      border-radius: 6px; padding: 7px 10px;
+      display: none;
+    }
+    .error-msg.visible { display: block; }
+
+    .modal-btns { display: flex; gap: 8px; }
+    .modal-btns .btn { flex: 1; }
+
+    /* ── Scrollbars ── */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+    .divider { height: 1px; background: var(--border); }
+
+    /* ── Always-block toggle pill in header ── */
+    .block-pill {
+      display: flex; align-items: center; gap: 7px;
+      border-radius: 999px; padding: 3px 10px 3px 12px;
+      border: 1px solid;
+      transition: background 0.2s, border-color 0.2s;
+      cursor: pointer; user-select: none;
+    }
+    .block-pill.on  { background: rgba(99,102,241,0.15); border-color: rgba(99,102,241,0.4); }
+    .block-pill.off { background: rgba(100,116,139,0.10); border-color: rgba(100,116,139,0.25); }
+    .block-pill-label {
+      font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+      transition: color 0.2s;
+    }
+    .block-pill.on  .block-pill-label { color: var(--accent); }
+    .block-pill.off .block-pill-label { color: var(--text-muted); }
+
+    /* Pure CSS switch inside the pill (no <input>, no double-fire) */
+    .pill-track {
+      width: 34px; height: 20px;
+      background: var(--border); border-radius: 10px;
+      position: relative; flex-shrink: 0; pointer-events: none;
+      transition: background 0.2s;
+    }
+    .pill-thumb {
+      position: absolute; width: 14px; height: 14px;
+      background: white; border-radius: 50%;
+      top: 3px; left: 3px; transition: transform 0.2s;
+    }
+    .block-pill.on .pill-track { background: var(--accent); }
+    .block-pill.on .pill-thumb { transform: translateX(14px); }
+
+    /* ── Sites hidden state ── */
+    .sites-hidden {
+      display: flex; flex-direction: column; align-items: center;
+      gap: 10px; padding: 24px 0;
+      color: var(--text-muted); text-align: center;
+    }
+    .sites-hidden .lock-icon { font-size: 28px; }
+    .sites-hidden .count-text { font-size: 13px; color: var(--text); font-weight: 500; }
+    .sites-hidden .sub-text   { font-size: 11px; color: var(--text-muted); }
+    .sites-reveal-bar {
+      display: flex; justify-content: flex-end; margin-bottom: 4px;
+    }
+    .btn-link {
+      background: none; border: none; cursor: pointer;
+      color: var(--text-muted); font-size: 11px; padding: 2px 4px;
+      border-radius: 4px;
+    }
+    .btn-link:hover { color: var(--text); text-decoration: underline; }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <header>
+    <div class="header-left">
+      <div class="logo">🛡</div>
+      <span class="app-title">Website Blocker</span>
+    </div>
+    <div class="header-right">
+      <!-- Always-block toggle pill -->
+      <div class="block-pill on" id="block-pill" title="Toggle always-block mode">
+        <span class="block-pill-label" id="block-pill-label">Blocking: ON</span>
+        <div class="pill-track" id="pill-track">
+          <div class="pill-thumb"></div>
+        </div>
+      </div>
+      <button class="btn-icon" id="btn-lock" title="Lock session">🔒</button>
+    </div>
+  </header>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="sites">Sites</button>
+    <button class="tab-btn" data-tab="schedule">Schedule</button>
+    <button class="tab-btn" data-tab="pomodoro">Pomodoro</button>
+    <button class="tab-btn" data-tab="settings">Settings</button>
+  </div>
+
+  <!-- ─── SITES TAB ─── -->
+  <div class="tab-panel active" id="tab-sites">
+    <div class="row">
+      <div style="flex:1">
+        <label for="site-input">Domain to block</label>
+        <input type="text" id="site-input" placeholder="e.g. reddit.com" autocomplete="off" />
+      </div>
+      <button class="btn btn-primary" id="btn-add-site" style="margin-bottom:0">Add</button>
+    </div>
+
+    <!-- Hidden state (default) -->
+    <div id="sites-hidden-state">
+      <div class="sites-hidden">
+        <span class="lock-icon">🔒</span>
+        <span class="count-text" id="sites-count-text">0 sites blocked</span>
+        <span class="sub-text">Enter your password to view the list</span>
+        <button class="btn btn-ghost" id="btn-reveal-sites">Reveal Blocked Sites</button>
+      </div>
+    </div>
+
+    <!-- Revealed state (shown after password confirmation) -->
+    <div id="site-list-container" style="display:none">
+      <div class="sites-reveal-bar">
+        <button class="btn-link" id="btn-hide-sites">Hide list</button>
+      </div>
+      <div class="site-list" id="site-list"></div>
+      <div class="empty-msg" id="site-empty" style="display:none">
+        No sites blocked yet.<br/>Add a domain above to get started.
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── SCHEDULE TAB ─── -->
+  <div class="tab-panel" id="tab-schedule">
+    <div class="toggle-row">
+      <span style="font-weight:600">Enable Schedule</span>
+      <label class="toggle">
+        <input type="checkbox" id="schedule-enabled" />
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+
+    <div class="time-row">
+      <div>
+        <label for="schedule-start">Start time</label>
+        <input type="time" id="schedule-start" value="09:00" />
+      </div>
+      <div>
+        <label for="schedule-end">End time</label>
+        <input type="time" id="schedule-end" value="17:00" />
+      </div>
+    </div>
+
+    <div>
+      <label>Active days</label>
+      <div class="days-grid" id="days-grid">
+        <button class="day-btn" data-day="0">Sun</button>
+        <button class="day-btn selected" data-day="1">Mon</button>
+        <button class="day-btn selected" data-day="2">Tue</button>
+        <button class="day-btn selected" data-day="3">Wed</button>
+        <button class="day-btn selected" data-day="4">Thu</button>
+        <button class="day-btn selected" data-day="5">Fri</button>
+        <button class="day-btn" data-day="6">Sat</button>
+      </div>
+    </div>
+
+    <p style="font-size:11px; color:var(--text-muted); line-height:1.5">
+      Blocking is active during the time window on selected days.
+      If a Pomodoro session is running, it overrides the schedule.
+    </p>
+
+    <button class="btn btn-primary btn-full" id="btn-save-schedule">Save Schedule</button>
+  </div>
+
+  <!-- ─── POMODORO TAB ─── -->
+  <div class="tab-panel" id="tab-pomodoro">
+    <div class="pomo-timer">
+      <div class="pomo-phase" id="pomo-phase">Idle</div>
+      <div class="pomo-countdown idle" id="pomo-countdown">25:00</div>
+      <div class="pomo-sessions" id="pomo-sessions">Sessions completed: 0</div>
+    </div>
+
+    <div class="pomo-controls">
+      <button class="btn btn-success btn-full" id="btn-pomo-start">▶ Start</button>
+      <button class="btn btn-danger" id="btn-pomo-stop" style="display:none">■ Stop</button>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="settings-grid">
+      <div>
+        <label for="pomo-work">Work (minutes)</label>
+        <input type="number" id="pomo-work" min="1" max="120" value="25" />
+      </div>
+      <div>
+        <label for="pomo-break">Break (minutes)</label>
+        <input type="number" id="pomo-break" min="1" max="60" value="5" />
+      </div>
+    </div>
+
+    <button class="btn btn-ghost btn-full" id="btn-save-pomo">Save Settings</button>
+  </div>
+
+  <!-- ─── SETTINGS TAB ─── -->
+  <div class="tab-panel" id="tab-settings">
+
+    <div class="section-title">Password</div>
+    <div>
+      <label for="current-password">Current password</label>
+      <input type="password" id="current-password" placeholder="Your current password" />
+    </div>
+    <div>
+      <label for="new-password">New password</label>
+      <input type="password" id="new-password" placeholder="Enter new password" />
+    </div>
+    <div>
+      <label for="confirm-password">Confirm new password</label>
+      <input type="password" id="confirm-password" placeholder="Repeat new password" />
+    </div>
+    <button class="btn btn-ghost btn-full" id="btn-change-pw">Change Password</button>
+
+    <div class="divider"></div>
+
+    <div class="section-title">Custom Quotes</div>
+    <div>
+      <label for="quote-text">Quote text</label>
+      <input type="text" id="quote-text" placeholder="Inspirational quote…" />
+    </div>
+    <div>
+      <label for="quote-author">Author</label>
+      <input type="text" id="quote-author" placeholder="Author name" />
+    </div>
+    <button class="btn btn-ghost btn-full" id="btn-add-quote">Add Quote</button>
+    <div class="quote-list" id="quote-list"></div>
+
+    <div class="divider"></div>
+
+    <div class="danger-zone">
+      <div class="section-title" style="color:var(--danger)">Danger Zone</div>
+      <p style="margin-top:8px">This will permanently erase all blocked sites, schedule settings, Pomodoro config, and your password. This cannot be undone.</p>
+      <button class="btn btn-danger btn-full" id="btn-reset">Reset All Settings</button>
+    </div>
+
+  </div>
+
+  <!-- ─── MODAL OVERLAY ─── -->
+  <div id="modal-overlay">
+    <!-- Setup password modal -->
+    <div class="modal" id="modal-setup" style="display:none">
+      <h2>Welcome to Website Blocker</h2>
+      <p>Create a master password to protect your settings. You'll need this to add or remove sites, modify schedules, and control Pomodoro sessions.</p>
+      <div>
+        <label for="setup-pw1">Password</label>
+        <input type="password" id="setup-pw1" placeholder="Choose a password" />
+      </div>
+      <div>
+        <label for="setup-pw2">Confirm</label>
+        <input type="password" id="setup-pw2" placeholder="Repeat password" />
+      </div>
+      <div class="error-msg" id="setup-error"></div>
+      <button class="btn btn-primary btn-full" id="btn-setup-submit">Create Password</button>
+    </div>
+
+    <!-- Unlock session modal -->
+    <div class="modal" id="modal-unlock" style="display:none">
+      <h2>🔒 Unlock</h2>
+      <p>Enter your master password to continue.</p>
+      <div>
+        <label for="unlock-pw">Password</label>
+        <input type="password" id="unlock-pw" placeholder="Your password" />
+      </div>
+      <div class="error-msg" id="unlock-error"></div>
+      <div class="modal-btns">
+        <button class="btn btn-ghost" id="btn-unlock-forgot">Forgot?</button>
+        <button class="btn btn-primary" id="btn-unlock-submit">Unlock</button>
+      </div>
+    </div>
+
+    <!-- Forgot password / reset modal -->
+    <div class="modal" id="modal-forgot" style="display:none">
+      <h2>⚠️ Reset Everything?</h2>
+      <p>If you've forgotten your password, you can reset all settings. <strong>This will erase your entire blocklist, schedule, and password</strong>. This cannot be undone.</p>
+      <div class="modal-btns">
+        <button class="btn btn-ghost" id="btn-forgot-cancel">Cancel</button>
+        <button class="btn btn-danger" id="btn-forgot-confirm">Yes, Reset All</button>
+      </div>
+    </div>
+
+    <!-- Confirm destructive action modal -->
+    <div class="modal" id="modal-confirm" style="display:none">
+      <h2 id="confirm-title">Are you sure?</h2>
+      <p id="confirm-body"></p>
+      <div class="modal-btns">
+        <button class="btn btn-ghost" id="btn-confirm-cancel">Cancel</button>
+        <button class="btn btn-danger" id="btn-confirm-ok">Confirm</button>
+      </div>
+    </div>
+
+    <!-- Generic "confirm with password" modal (reused for reveal + schedule) -->
+    <div class="modal" id="modal-reveal" style="display:none">
+      <h2 id="reveal-modal-title">🔒 Confirm</h2>
+      <p id="reveal-modal-body">Enter your master password to continue.</p>
+      <div>
+        <label for="reveal-pw">Password</label>
+        <input type="password" id="reveal-pw" placeholder="Your password" />
+      </div>
+      <div class="error-msg" id="reveal-error"></div>
+      <div class="modal-btns">
+        <button class="btn btn-ghost" id="btn-reveal-cancel">Cancel</button>
+        <button class="btn btn-primary" id="btn-reveal-submit">Show Sites</button>
+      </div>
+    </div>
+
+    <!-- Pending context menu domain modal -->
+    <div class="modal" id="modal-ctx-pending" style="display:none">
+      <h2>Block via Right-Click</h2>
+      <p id="ctx-pending-msg"></p>
+      <div class="modal-btns">
+        <button class="btn btn-ghost" id="btn-ctx-cancel">Dismiss</button>
+        <button class="btn btn-primary" id="btn-ctx-confirm">Block It</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
