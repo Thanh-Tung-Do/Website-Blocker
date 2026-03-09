@@ -30,6 +30,7 @@ async function initExtension() {
   }
 
   // Restore blocking rules based on current state
+  // (when session is locked, rules left as-is from previous session — they persist natively)
   await updateBlockingRules();
   await updateBadge();
 }
@@ -44,6 +45,95 @@ async function getLocal(keys) {
 
 async function getSession(keys) {
   return chrome.storage.session.get(keys);
+}
+
+// ─────────────────────────────────────────────────────────────
+// CRYPTO HELPERS
+// ─────────────────────────────────────────────────────────────
+
+const PBKDF2_ITERATIONS = 200_000;
+
+function hexToBytes(hex) {
+  return new Uint8Array(hex.match(/.{2}/g).map(b => parseInt(b, 16)));
+}
+
+function bytesToHex(bytes) {
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function generateSalt() {
+  return bytesToHex(crypto.getRandomValues(new Uint8Array(16)));
+}
+
+// Derives a 256-bit AES-GCM master key from password + salt using PBKDF2.
+// The returned CryptoKey is extractable so we can export it to session storage.
+async function deriveKey(password, salt) {
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(password),
+    { name: 'PBKDF2' },
+    false,
+    ['deriveKey']
+  );
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt: hexToBytes(salt), iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    true,           // extractable — needed to export to session storage
+    ['encrypt', 'decrypt']
+  );
+}
+
+// Returns SHA-256(raw key bytes) as hex — used as the stored password verifier.
+// Knowing SHA-256(key) does NOT reveal the key itself.
+async function hashKey(key) {
+  const raw = await crypto.subtle.exportKey('raw', key);
+  const digest = await crypto.subtle.digest('SHA-256', raw);
+  return bytesToHex(new Uint8Array(digest));
+}
+
+// Exports the raw key bytes as a hex string for session storage.
+async function keyToHex(key) {
+  const raw = await crypto.subtle.exportKey('raw', key);
+  return bytesToHex(new Uint8Array(raw));
+}
+
+// Imports a hex-encoded key back into a CryptoKey object.
+async function hexToKey(hex) {
+  return crypto.subtle.importKey(
+    'raw', hexToBytes(hex), { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']
+  );
+}
+
+// Encrypts any JSON-serialisable value with AES-GCM.
+// Returns { iv: hex, data: hex }.
+async function encryptJSON(value, key) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    new TextEncoder().encode(JSON.stringify(value))
+  );
+  return { iv: bytesToHex(iv), data: bytesToHex(new Uint8Array(ciphertext)) };
+}
+
+// Decrypts a value previously encrypted with encryptJSON.
+// Returns the original JS value, or throws on failure.
+async function decryptJSON(iv, data, key) {
+  const plaintext = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: hexToBytes(iv) },
+    key,
+    hexToBytes(data)
+  );
+  return JSON.parse(new TextDecoder().decode(plaintext));
+}
+
+// Legacy: raw SHA-256 used before salting was added.
+// Only used for migration; do not call elsewhere.
+async function legacyHash(password) {
+  const data = new TextEncoder().encode(password);
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  return bytesToHex(new Uint8Array(digest));
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -95,13 +185,26 @@ async function isScheduleActive() {
 
 async function updateBlockingRules() {
   const active = await isBlockingActive();
-  const { blocklist = [] } = await getLocal('blocklist');
-
-  // Remove all existing dynamic rules first
   const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
   const removeRuleIds = existingRules.map(r => r.id);
 
-  if (!active || blocklist.length === 0) {
+  if (!active) {
+    // Blocking is off — always safe to clear rules
+    if (removeRuleIds.length > 0) {
+      await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds, addRules: [] });
+    }
+    return;
+  }
+
+  // Blocking is on — we need the decrypted blocklist
+  const blocklist = await getDecryptedBlocklist();
+
+  if (blocklist === null) {
+    // Session is locked: leave existing rules unchanged (they persist from last unlock)
+    return;
+  }
+
+  if (blocklist.length === 0) {
     if (removeRuleIds.length > 0) {
       await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds, addRules: [] });
     }
@@ -109,7 +212,6 @@ async function updateBlockingRules() {
   }
 
   const extId = chrome.runtime.id;
-
   const addRules = blocklist.map((domain, index) => ({
     id: index + 1,
     priority: 1,
@@ -120,13 +222,36 @@ async function updateBlockingRules() {
       }
     },
     condition: {
-      // Matches domain and all subdomains, not URL query params
       regexFilter: `^https?://(?:[^/?#]*\\.)?${escapeRegex(domain)}(?:[/?#].*)?$`,
       resourceTypes: ['main_frame']
     }
   }));
 
   await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds, addRules });
+}
+
+// Returns the decrypted blocklist array, or null if session is locked / decryption fails.
+async function getDecryptedBlocklist() {
+  const { sessionEncKey } = await getSession('sessionEncKey');
+  if (!sessionEncKey) return null;
+
+  const { blocklistEncrypted, blocklistIV } = await getLocal(['blocklistEncrypted', 'blocklistIV']);
+  if (!blocklistEncrypted || !blocklistIV) return [];
+
+  try {
+    const key = await hexToKey(sessionEncKey);
+    return await decryptJSON(blocklistIV, blocklistEncrypted, key);
+  } catch {
+    // Decryption failed (corrupted data or wrong key) — leave rules unchanged
+    return null;
+  }
+}
+
+// Encrypts and saves the blocklist. Also updates blocking rules.
+async function saveBlocklist(blocklist, key) {
+  const { iv, data } = await encryptJSON(blocklist, key);
+  await chrome.storage.local.set({ blocklistEncrypted: data, blocklistIV: iv });
+  await updateBlockingRules();
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -241,45 +366,69 @@ async function handlePomodoroAlarm() {
 // MASTER PASSWORD
 // ─────────────────────────────────────────────────────────────
 
-async function hashPassword(password) {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(password);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
 async function verifyPassword(password) {
   // Lockout check
   const session = await getSession(['lockoutUntil', 'failedAttempts']);
 
   if (session.lockoutUntil && Date.now() < session.lockoutUntil) {
-    const remainingMs = session.lockoutUntil - Date.now();
-    const remainingMinutes = Math.ceil(remainingMs / 60000);
+    const remainingMinutes = Math.ceil((session.lockoutUntil - Date.now()) / 60000);
     return { success: false, locked: true, remainingMinutes };
   }
 
-  const { passwordHash } = await getLocal('passwordHash');
-  const hash = await hashPassword(password);
+  const { passwordHash, passwordSalt } = await getLocal(['passwordHash', 'passwordSalt']);
 
-  if (hash === passwordHash) {
+  let key = null;
+  let verified = false;
+
+  if (!passwordSalt) {
+    // ── Legacy path: old unsalted SHA-256 ─────────────────────
+    const hash = await legacyHash(password);
+    if (hash === passwordHash) {
+      verified = true;
+      // Migrate to new PBKDF2 + encrypted blocklist format
+      const salt = await generateSalt();
+      key = await deriveKey(password, salt);
+      const newHash = await hashKey(key);
+
+      // Re-encrypt any existing plaintext blocklist
+      const { blocklist: legacyList = [] } = await getLocal('blocklist');
+      const updates = { passwordHash: newHash, passwordSalt: salt };
+      if (legacyList.length > 0) {
+        const { iv, data } = await encryptJSON(legacyList, key);
+        updates.blocklistEncrypted = data;
+        updates.blocklistIV        = iv;
+        updates.blocklist          = null; // remove old key (chrome.storage ignores null removes)
+      }
+      // Atomic write
+      await chrome.storage.local.set(updates);
+      if (legacyList.length > 0) {
+        await chrome.storage.local.remove('blocklist');
+      }
+    }
+  } else {
+    // ── New path: PBKDF2 ──────────────────────────────────────
+    key = await deriveKey(password, passwordSalt);
+    verified = (await hashKey(key)) === passwordHash;
+  }
+
+  if (verified) {
+    const keyHex = await keyToHex(key);
     await chrome.storage.session.set({
       sessionUnlocked: true,
-      failedAttempts: 0,
-      lockoutUntil: null
+      failedAttempts:  0,
+      lockoutUntil:    null,
+      sessionEncKey:   keyHex
     });
     return { success: true };
   }
 
-  // Wrong password
+  // Wrong password — track attempts
   const attempts = (session.failedAttempts || 0) + 1;
-
   if (attempts >= 5) {
     const lockoutUntil = Date.now() + 10 * 60 * 1000;
     await chrome.storage.session.set({ failedAttempts: attempts, lockoutUntil });
     return { success: false, locked: true, remainingMinutes: 10 };
   }
-
   await chrome.storage.session.set({ failedAttempts: attempts });
   return { success: false, attemptsRemaining: 5 - attempts };
 }
@@ -294,20 +443,23 @@ async function isSessionUnlocked() {
 // ─────────────────────────────────────────────────────────────
 
 async function addSiteToBlocklist(domain) {
-  const { blocklist = [] } = await getLocal('blocklist');
+  const blocklist = (await getDecryptedBlocklist()) || [];
   if (blocklist.includes(domain)) return blocklist;
-  const newBlocklist = [...blocklist, domain];
-  await chrome.storage.local.set({ blocklist: newBlocklist });
-  await updateBlockingRules();
-  return newBlocklist;
+
+  const { sessionEncKey } = await getSession('sessionEncKey');
+  const key = await hexToKey(sessionEncKey);
+  const newList = [...blocklist, domain];
+  await saveBlocklist(newList, key);
+  return newList;
 }
 
 async function removeSiteFromBlocklist(domain) {
-  const { blocklist = [] } = await getLocal('blocklist');
-  const newBlocklist = blocklist.filter(d => d !== domain);
-  await chrome.storage.local.set({ blocklist: newBlocklist });
-  await updateBlockingRules();
-  return newBlocklist;
+  const blocklist = (await getDecryptedBlocklist()) || [];
+  const { sessionEncKey } = await getSession('sessionEncKey');
+  const key = await hexToKey(sessionEncKey);
+  const newList = blocklist.filter(d => d !== domain);
+  await saveBlocklist(newList, key);
+  return newList;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -394,9 +546,12 @@ async function handleMessage(message) {
         'failedAttempts', 'pendingContextMenuDomain'
       ]);
       const local = await getLocal([
-        'blocklist', 'schedule', 'pomodoroSettings',
+        'schedule', 'pomodoroSettings',
         'passwordHash', 'customQuotes', 'alwaysBlock'
       ]);
+
+      // Blocklist comes from encrypted storage (decrypted with session key)
+      const blocklist = (await getDecryptedBlocklist()) || [];
 
       return {
         pomodoro: {
@@ -406,7 +561,7 @@ async function handleMessage(message) {
           sessionCount: session.pomodoroSessionCount || 0,
           settings: local.pomodoroSettings || { workDuration: 25, breakDuration: 5 }
         },
-        blocklist: local.blocklist || [],
+        blocklist,
         schedule: local.schedule || {
           enabled: false,
           startTime: '09:00',
@@ -427,9 +582,19 @@ async function handleMessage(message) {
 
     // ── Password setup (first run) ───────────────────────────
     case 'SETUP_PASSWORD': {
-      const hash = await hashPassword(message.password);
-      await chrome.storage.local.set({ passwordHash: hash });
-      await chrome.storage.session.set({ sessionUnlocked: true, failedAttempts: 0, lockoutUntil: null });
+      const salt = await generateSalt();
+      const key  = await deriveKey(message.password, salt);
+      const hash = await hashKey(key);
+      const keyHex = await keyToHex(key);
+
+      // Atomic write of all new password fields
+      await chrome.storage.local.set({ passwordHash: hash, passwordSalt: salt });
+      await chrome.storage.session.set({
+        sessionUnlocked: true,
+        failedAttempts:  0,
+        lockoutUntil:    null,
+        sessionEncKey:   keyHex
+      });
       return { success: true };
     }
 
@@ -441,6 +606,7 @@ async function handleMessage(message) {
     // ── Manual lock ──────────────────────────────────────────
     case 'LOCK_SESSION': {
       await chrome.storage.session.set({ sessionUnlocked: false });
+      await chrome.storage.session.remove('sessionEncKey');
       return { success: true };
     }
 
@@ -510,9 +676,10 @@ async function handleMessage(message) {
       return { success: true };
     }
 
-    // ── Password change (requires current password) ──────────
+    // ── Password change (requires current password + re-encrypts blocklist) ──
     case 'CHANGE_PASSWORD': {
       if (!await isSessionUnlocked()) return { error: 'Session locked' };
+
       // Verify the current password before allowing the change
       const verify = await verifyPassword(message.currentPassword);
       if (!verify.success) {
@@ -521,8 +688,26 @@ async function handleMessage(message) {
         }
         return { error: `Current password is incorrect. ${verify.attemptsRemaining} attempt(s) remaining.` };
       }
-      const hash = await hashPassword(message.newPassword);
-      await chrome.storage.local.set({ passwordHash: hash });
+
+      // Derive new key and re-encrypt blocklist
+      const newSalt   = await generateSalt();
+      const newKey    = await deriveKey(message.newPassword, newSalt);
+      const newHash   = await hashKey(newKey);
+      const newKeyHex = await keyToHex(newKey);
+
+      const blocklist = (await getDecryptedBlocklist()) || [];
+      const updates   = { passwordHash: newHash, passwordSalt: newSalt };
+
+      if (blocklist.length > 0) {
+        const { iv, data } = await encryptJSON(blocklist, newKey);
+        updates.blocklistEncrypted = data;
+        updates.blocklistIV        = iv;
+      }
+
+      // Atomic write of all password + blocklist fields
+      await chrome.storage.local.set(updates);
+      await chrome.storage.session.set({ sessionEncKey: newKeyHex });
+
       return { success: true };
     }
 

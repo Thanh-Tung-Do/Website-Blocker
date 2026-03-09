@@ -422,15 +422,16 @@ function setupSettingsTab() {
   document.getElementById('btn-change-pw').addEventListener('click', changePassword);
   document.getElementById('btn-add-quote').addEventListener('click', addCustomQuote);
   document.getElementById('btn-reset').addEventListener('click', () => {
-    showConfirm(
-      'Reset All Settings?',
-      'This permanently erases your blocklist, schedule, password, and all settings. This cannot be undone.',
+    confirmWithPassword(
+      '⚠️ Reset All Settings?',
+      'Enter your master password to permanently erase your blocklist, schedule, password, and all settings. This cannot be undone.',
       async () => {
         await send({ type: 'RESET_ALL' });
         sitesRevealed = false;
         await refreshState();
         renderUI();
-      }
+      },
+      'Reset Everything'
     );
   });
 }
