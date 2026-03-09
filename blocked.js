@@ -124,33 +124,70 @@ function startPomoCountdown(pomodoroState) {
 // UNBLOCK BUTTON
 // ─────────────────────────────────────────────────────────────
 
-function setupUnblockButton(domain, sessionUnlocked, hardActive) {
-  // Only show when session is unlocked and Hard Mode is not forcing the block
-  if (!sessionUnlocked || hardActive || domain === 'this site') return;
+function setupUnblockButton(domain, hasPassword, hardActive) {
+  // Never show if Hard Mode is active or domain is unknown
+  if (hardActive || domain === 'this site') return;
 
-  const section = document.getElementById('unblock-section');
-  const btn     = document.getElementById('unblock-btn');
+  const section     = document.getElementById('unblock-section');
+  const btn         = document.getElementById('unblock-btn');
+  const form        = document.getElementById('unblock-form');
+  const pwInput     = document.getElementById('unblock-password');
+  const confirmBtn  = document.getElementById('unblock-confirm');
+  const errorDiv    = document.getElementById('unblock-error');
   section.style.display = 'block';
 
-  btn.addEventListener('click', async () => {
-    btn.disabled = true;
-    btn.textContent = 'Removing…';
+  async function doUnblock() {
+    confirmBtn.disabled = true;
+    errorDiv.style.display = 'none';
+
     try {
+      // Verify password first
+      const verify = await chrome.runtime.sendMessage({
+        type: 'VERIFY_PASSWORD', password: pwInput.value
+      });
+
+      if (!verify || !verify.success) {
+        const msg = verify && verify.locked
+          ? `Locked out. Try again in ${verify.remainingMinutes} min.`
+          : verify && verify.attemptsRemaining != null
+            ? `Wrong password. ${verify.attemptsRemaining} attempt(s) left.`
+            : 'Wrong password.';
+        errorDiv.textContent = msg;
+        errorDiv.style.display = 'block';
+        pwInput.value = '';
+        pwInput.focus();
+        confirmBtn.disabled = false;
+        return;
+      }
+
+      // Password correct — remove the site
       const result = await chrome.runtime.sendMessage({ type: 'REMOVE_SITE', domain });
       if (result && result.success) {
-        btn.textContent = 'Unblocked!';
-        // Redirect back to the site after a brief moment
-        setTimeout(() => {
-          window.location.href = `https://${domain}`;
-        }, 600);
+        confirmBtn.textContent = 'Unblocked!';
+        setTimeout(() => { window.location.href = `https://${domain}`; }, 600);
       } else {
-        btn.textContent = 'Failed — try from the popup';
-        btn.disabled = false;
+        errorDiv.textContent = 'Failed — try from the popup.';
+        errorDiv.style.display = 'block';
+        confirmBtn.disabled = false;
       }
     } catch {
-      btn.textContent = 'Failed — try from the popup';
-      btn.disabled = false;
+      errorDiv.textContent = 'Extension unreachable — try from the popup.';
+      errorDiv.style.display = 'block';
+      confirmBtn.disabled = false;
     }
+  }
+
+  // First click reveals the password form
+  btn.addEventListener('click', () => {
+    btn.style.display = 'none';
+    form.style.display = 'block';
+    pwInput.focus();
+  });
+
+  confirmBtn.addEventListener('click', doUnblock);
+
+  pwInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter') doUnblock();
   });
 }
 
@@ -185,6 +222,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     startPomoCountdown(state.pomodoro);
 
-    setupUnblockButton(domain, state.sessionUnlocked, hardActive);
+    setupUnblockButton(domain, state.hasPassword, hardActive);
   }
 });
