@@ -21,9 +21,6 @@ let state = null;
 let countdownInterval = null;
 let selectedDays = new Set([1, 2, 3, 4, 5]);
 
-// Sites tab
-let selectedListId = 'default';  // which list is being edited
-
 // Generic password-confirmation
 let pendingPasswordCallback = null;
 
@@ -66,8 +63,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
   if (area === 'local' && (changes.blockLists || changes.alwaysBlock)) {
     renderHeader();
-    renderBlockLists();
-    renderListEditSection();
+    renderSiteList();
   }
 });
 
@@ -80,8 +76,7 @@ function renderUI() {
   if (!state.sessionUnlocked) { showModal('unlock'); return; }
   hideModal();
   renderHeader();
-  renderBlockLists();
-  renderListEditSection();
+  renderSiteList();
   renderScheduleTab();
   renderPomodoroTab();
   renderSettingsTab();
@@ -183,7 +178,7 @@ function confirmWithPassword(title, body, callback) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// SITES TAB — multi-list
+// SITES TAB
 // ─────────────────────────────────────────────────────────────
 
 function setupSitesTab() {
@@ -191,134 +186,18 @@ function setupSitesTab() {
   document.getElementById('site-input').addEventListener('keydown', e => {
     if (e.key === 'Enter') addSite();
   });
-
-  document.getElementById('btn-new-list').addEventListener('click', createNewList);
 }
 
-// Render the list-of-lists cards
-function renderBlockLists() {
-  const container = document.getElementById('block-lists');
-  const lists     = state.blockLists || [];
-  container.innerHTML = '';
+function renderSiteList() {
+  const siteList  = document.getElementById('site-list');
+  const emptyMsg  = document.getElementById('site-empty');
+  const countEl   = document.getElementById('sites-count');
 
-  lists.forEach(list => {
-    const item = document.createElement('div');
-    item.className = 'block-list-item' + (list.id === selectedListId ? ' editing' : '');
-    item.dataset.id = list.id;
+  const defaultList = (state.blockLists || []).find(l => l.id === 'default');
+  const domains     = defaultList ? (defaultList.domains || []) : [];
 
-    const domainCount = (list.domains || []).length;
-    const isDefault   = list.id === 'default';
-    const statusClass = list.enabled ? 'on' : 'off';
-
-    item.innerHTML = `
-      <span class="list-dot ${statusClass}"></span>
-      <div class="list-info">
-        <div class="list-name">${escapeHtml(list.name)}</div>
-        <div class="list-meta">${domainCount} domain${domainCount !== 1 ? 's' : ''}${list.enabled ? '' : ' · disabled'}</div>
-      </div>
-      <div class="list-actions">
-        <label class="toggle" style="pointer-events:auto" title="${list.enabled ? 'Disable list' : 'Enable list'}">
-          <input type="checkbox" class="list-toggle-chk" data-list-id="${list.id}" ${list.enabled ? 'checked' : ''} />
-          <span class="toggle-slider"></span>
-        </label>
-        <button class="btn-icon-sm" data-action="edit" data-list-id="${list.id}" title="Edit domains">✏️</button>
-        ${isDefault ? '' : `<button class="btn-icon-sm danger" data-action="delete" data-list-id="${list.id}" title="Delete list">✕</button>`}
-      </div>
-    `;
-
-    // List enable/disable toggle
-    item.querySelector('.list-toggle-chk').addEventListener('change', (e) => {
-      e.stopPropagation();
-      const enabling = e.target.checked;
-      if (!enabling) {
-        // Turning OFF — may require password
-        e.target.checked = true; // revert visually until confirmed
-        maybeRequirePassword(
-          '🔒 Disable List',
-          `Enter your password to disable the "${list.name}" list.`,
-          async () => {
-            const result = await send({ type: 'TOGGLE_LIST', id: list.id, enabled: false });
-            if (result.error) { alert(result.error); return; }
-            state.blockLists = result.blockLists;
-            renderBlockLists();
-          }
-        );
-      } else {
-        // Turning ON — no password
-        send({ type: 'TOGGLE_LIST', id: list.id, enabled: true }).then(result => {
-          if (result.error) { alert(result.error); return; }
-          state.blockLists = result.blockLists;
-          renderBlockLists();
-        });
-      }
-    });
-
-    // Edit button — select this list for editing
-    item.querySelector('[data-action="edit"]').addEventListener('click', () => {
-      selectList(list.id);
-    });
-
-    // Delete button
-    const deleteBtn = item.querySelector('[data-action="delete"]');
-    if (deleteBtn) {
-      deleteBtn.addEventListener('click', () => {
-        maybeRequirePassword(
-          '🔒 Delete List',
-          `Enter your password to permanently delete "${list.name}" and all its domains.`,
-          async () => {
-            const result = await send({ type: 'DELETE_LIST', id: list.id });
-            if (result.error) { alert(result.error); return; }
-            state.blockLists = result.blockLists;
-            if (selectedListId === list.id) {
-              selectedListId = 'default';
-              sitesRevealed  = false;
-            }
-            renderBlockLists();
-            renderListEditSection();
-          }
-        );
-      });
-    }
-
-    container.appendChild(item);
-  });
-}
-
-// Switch which list is selected for editing
-function selectList(id) {
-  selectedListId = id;
-  renderBlockLists();
-  renderListEditSection();
-}
-
-// Show or hide the domain-editing section and update its content
-function renderListEditSection() {
-  const section  = document.getElementById('selected-list-section');
-  const nameEl   = document.getElementById('selected-list-name');
-  const addLabel = document.getElementById('adding-to-label');
-  const list     = (state.blockLists || []).find(l => l.id === selectedListId);
-
-  if (!list) {
-    section.style.display = 'none';
-    return;
-  }
-
-  section.style.display = 'block';
-  nameEl.textContent   = list.name;
-  addLabel.textContent = list.name;
-
-  renderSelectedListDomains();
-}
-
-// Render the domain list for the selected list
-function renderSelectedListDomains() {
-  const siteList = document.getElementById('site-list');
-  const emptyMsg = document.getElementById('site-empty');
-
-  const list    = (state.blockLists || []).find(l => l.id === selectedListId);
-  const domains = list ? (list.domains || []) : [];
-
-  siteList.innerHTML = '';
+  countEl.textContent = domains.length === 0 ? '' : `${domains.length} site${domains.length !== 1 ? 's' : ''} blocked`;
+  siteList.innerHTML  = '';
 
   if (domains.length === 0) {
     emptyMsg.style.display = 'block';
@@ -330,7 +209,7 @@ function renderSelectedListDomains() {
     const item = document.createElement('div');
     item.className = 'site-item';
     item.innerHTML = `<span title="${escapeHtml(domain)}">${escapeHtml(domain)}</span><button title="Remove">✕</button>`;
-    item.querySelector('button').addEventListener('click', () => removeSiteFromList(domain, selectedListId));
+    item.querySelector('button').addEventListener('click', () => removeSite(domain));
     siteList.appendChild(item);
   });
 }
@@ -352,38 +231,21 @@ async function addSite() {
     return;
   }
 
-  const result = await send({ type: 'ADD_SITE_TO_LIST', domain, listId: selectedListId });
+  const result = await send({ type: 'ADD_SITE_TO_LIST', domain, listId: 'default' });
   if (result.error) { alert(result.error); return; }
 
-  input.value     = '';
+  input.value      = '';
   state.blockLists = result.blockLists;
-  renderBlockLists();
-  renderSelectedListDomains();
+  renderSiteList();
 }
 
-async function removeSiteFromList(domain, listId) {
+async function removeSite(domain) {
   if (!state.sessionUnlocked) { showModal('unlock'); return; }
 
-  const result = await send({ type: 'REMOVE_SITE_FROM_LIST', domain, listId });
+  const result = await send({ type: 'REMOVE_SITE_FROM_LIST', domain, listId: 'default' });
   if (result.error) { alert(result.error); return; }
   state.blockLists = result.blockLists;
-  renderBlockLists();
-  renderSelectedListDomains();
-}
-
-async function createNewList() {
-  if (!state.sessionUnlocked) { showModal('unlock'); return; }
-
-  const name = window.prompt('New list name:', 'My List');
-  if (!name || !name.trim()) return;
-
-  const result = await send({ type: 'CREATE_LIST', name: name.trim() });
-  if (result.error) { alert(result.error); return; }
-  state.blockLists = result.blockLists;
-  // Auto-select the new list
-  const newList = result.blockLists[result.blockLists.length - 1];
-  selectList(newList.id);
-  renderBlockLists();
+  renderSiteList();
 }
 
 function showInlineError(inputId, msg) {
@@ -574,7 +436,6 @@ function setupSettingsTab() {
       'This permanently erases your blocklist, schedule, password, and all settings. Cannot be undone.',
       async () => {
         await send({ type: 'RESET_ALL' });
-        selectedListId = 'default';
         await refreshState();
         renderUI();
       }
@@ -733,7 +594,6 @@ function setupModalButtons() {
   document.getElementById('btn-forgot-cancel').addEventListener('click',  () => showModal('unlock'));
   document.getElementById('btn-forgot-confirm').addEventListener('click', async () => {
     await send({ type: 'RESET_ALL' });
-    selectedListId = 'default';
     await refreshState();
     renderUI();
   });
@@ -786,8 +646,7 @@ function setupModalButtons() {
     state.blockLists = result.blockLists || state.blockLists;
     state.pendingContextMenuDomain = null;
     hideModal();
-    renderBlockLists();
-    renderListEditSection();
+    renderSiteList();
   });
 }
 

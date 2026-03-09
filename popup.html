@@ -155,6 +155,8 @@
 
     .empty-msg { text-align: center; color: var(--text-muted); padding: 24px 0; font-size: 12px; }
 
+    .sites-count { font-size: 11px; color: var(--text-muted); padding: 2px 0 6px; }
+
     /* ── Schedule tab ── */
     .toggle-row { display: flex; align-items: center; justify-content: space-between; }
 
@@ -277,6 +279,11 @@
 
     .divider { height: 1px; background: var(--border); }
 
+    /* ── Block-list count bar ── */
+    .sites-header {
+      display: flex; align-items: center; justify-content: space-between;
+    }
+
     /* ── Always-block toggle pill in header ── */
     .block-pill {
       display: flex; align-items: center; gap: 7px;
@@ -309,63 +316,6 @@
     .block-pill.on .pill-track { background: var(--accent); }
     .block-pill.on .pill-thumb { transform: translateX(14px); }
 
-    /* ── Block-list cards ── */
-    .lists-header {
-      display: flex; align-items: center; justify-content: space-between;
-    }
-    .block-list-item {
-      display: flex; align-items: center; gap: 10px;
-      background: var(--surface2); border: 1px solid var(--border);
-      border-radius: var(--radius); padding: 9px 12px;
-      transition: border-color 0.15s;
-    }
-    .block-list-item.editing { border-color: var(--accent); }
-    .list-dot {
-      width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
-      transition: background 0.2s;
-    }
-    .list-dot.on  { background: var(--success); }
-    .list-dot.off { background: var(--text-muted); }
-    .list-info    { flex: 1; min-width: 0; }
-    .list-name    { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .list-meta    { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
-    .list-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
-    .btn-icon-sm  {
-      background: none; border: none; cursor: pointer; color: var(--text-muted);
-      padding: 3px 5px; border-radius: 5px; font-size: 13px; line-height: 1;
-    }
-    .btn-icon-sm:hover { background: var(--border); color: var(--text); }
-    .btn-icon-sm.danger:hover { color: var(--danger); }
-    .btn-sm {
-      padding: 5px 10px; font-size: 11px;
-    }
-
-    /* ── Selected-list domain area ── */
-    .selected-list-section {
-      border-top: 1px solid var(--border);
-      padding-top: 10px;
-    }
-    .selected-list-header {
-      display: flex; align-items: center; justify-content: space-between;
-      margin-bottom: 8px;
-    }
-    .sites-hidden {
-      display: flex; flex-direction: column; align-items: center;
-      gap: 10px; padding: 16px 0;
-      color: var(--text-muted); text-align: center;
-    }
-    .sites-hidden .lock-icon  { font-size: 24px; }
-    .sites-hidden .count-text { font-size: 13px; color: var(--text); font-weight: 500; }
-    .sites-hidden .sub-text   { font-size: 11px; color: var(--text-muted); }
-    .sites-reveal-bar {
-      display: flex; justify-content: flex-end; margin-bottom: 4px;
-    }
-    .btn-link {
-      background: none; border: none; cursor: pointer;
-      color: var(--text-muted); font-size: 11px; padding: 2px 4px;
-      border-radius: 4px;
-    }
-    .btn-link:hover { color: var(--text); text-decoration: underline; }
   </style>
 </head>
 <body>
@@ -402,30 +352,17 @@
     <!-- Add domain row -->
     <div class="row">
       <div style="flex:1">
-        <label for="site-input">Add to: <span id="adding-to-label" style="color:var(--accent);font-weight:700">Default</span></label>
+        <label for="site-input">Block a website</label>
         <input type="text" id="site-input" placeholder="e.g. reddit.com" autocomplete="off" />
       </div>
       <button class="btn btn-primary" id="btn-add-site" style="margin-bottom:0">Add</button>
     </div>
 
-    <!-- Block Lists ── -->
-    <div class="lists-header">
-      <span class="section-title">Block Lists</span>
-      <button class="btn btn-ghost btn-sm" id="btn-new-list">+ New List</button>
-    </div>
-    <div class="block-lists" id="block-lists" style="display:flex;flex-direction:column;gap:6px">
-      <!-- rendered by popup.js -->
-    </div>
-
-    <!-- Selected list's domains ── -->
-    <div class="selected-list-section" id="selected-list-section" style="display:none">
-      <div class="selected-list-header">
-        <span class="section-title" id="selected-list-name">Default</span>
-      </div>
-      <div class="site-list" id="site-list"></div>
-      <div class="empty-msg" id="site-empty" style="display:none">
-        No sites in this list yet.<br/>Add a domain above.
-      </div>
+    <!-- Site list -->
+    <div id="sites-count" class="sites-count"></div>
+    <div class="site-list" id="site-list"></div>
+    <div class="empty-msg" id="site-empty" style="display:none">
+      No sites blocked yet.<br/>Add a domain above.
     </div>
 
   </div>
