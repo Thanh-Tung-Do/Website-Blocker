@@ -48,6 +48,29 @@ async function refreshState() {
   state = await send({ type: 'GET_STATE' });
 }
 
+// Keep popup in sync when the background updates storage
+// (e.g. context-menu adds a domain while the popup is already open)
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (!state) return;
+  if (area === 'local') {
+    if (changes.blockLists)              state.blockLists              = changes.blockLists.newValue;
+    if (changes.alwaysBlock)             state.alwaysBlock             = changes.alwaysBlock.newValue !== false;
+    if (changes.requirePasswordToDisable) state.requirePasswordToDisable = changes.requirePasswordToDisable.newValue !== false;
+  }
+  if (area === 'session') {
+    if (changes.pomodoroRunning || changes.pomodoroPhase || changes.pomodoroEndTime) {
+      // Re-fetch full state so Pomodoro UI stays accurate
+      refreshState().then(() => { renderPomodoroTab(); renderHeader(); });
+      return;
+    }
+  }
+  if (area === 'local' && (changes.blockLists || changes.alwaysBlock)) {
+    renderHeader();
+    renderBlockLists();
+    renderListEditSection();
+  }
+});
+
 // ─────────────────────────────────────────────────────────────
 // RENDER ROUTER
 // ─────────────────────────────────────────────────────────────
