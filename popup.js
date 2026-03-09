@@ -19,6 +19,7 @@ function send(msg) {
 
 let state = null;
 let countdownInterval = null;
+let hardCountdownInterval = null;
 let selectedDays = new Set([1, 2, 3, 4, 5]);
 let editingScheduleId = null; // null = adding new
 
@@ -38,6 +39,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupSitesTab();
   setupScheduleTab();
   setupPomodoroTab();
+  setupHardModeTab();
   setupSettingsTab();
   setupModalButtons();
   setupLockButton();
@@ -67,6 +69,7 @@ function renderUI() {
   renderSitesList();
   renderScheduleTab();
   renderPomodoroTab();
+  renderHardModeTab();
   renderSettingsTab();
   handlePendingContextMenu();
 }
@@ -76,14 +79,33 @@ function renderUI() {
 // ─────────────────────────────────────────────────────────────
 
 function renderHeader() {
-  const pill  = document.getElementById('block-pill');
-  const label = document.getElementById('block-pill-label');
-  const on    = !!state.alwaysBlock;
+  const pill      = document.getElementById('block-pill');
+  const label     = document.getElementById('block-pill-label');
+  const badge     = document.getElementById('hard-badge');
+  const on        = !!state.alwaysBlock;
+  const hardActive = !!(state.hardModeUntil && Date.now() < state.hardModeUntil);
 
-  // Pure CSS classes — no checkbox to sync
+  // Hard Mode badge
+  badge.classList.toggle('visible', hardActive);
+
+  // Pill state
   pill.classList.toggle('on',  on);
   pill.classList.toggle('off', !on);
   label.textContent = on ? 'Always Block: ON' : 'Always Block: OFF';
+
+  // Disable pill when hard mode is active
+  pill.style.opacity       = hardActive ? '0.4' : '';
+  pill.style.pointerEvents = hardActive ? 'none' : '';
+
+  // Instant CSS tooltip via data-tooltip (avoids browser title-attribute delay)
+  if (hardActive) {
+    pill.dataset.tooltip = 'Always Block is locked — Hard Mode is active.';
+  } else if (on) {
+    pill.dataset.tooltip = 'Always Block ON: sites in your list are blocked at all times until you turn this off.';
+  } else {
+    pill.dataset.tooltip = 'Always Block OFF: blocking only activates during scheduled times.';
+  }
+  pill.removeAttribute('title');
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -93,6 +115,7 @@ function renderHeader() {
 function setupBlockToggle() {
   document.getElementById('block-pill').addEventListener('click', async (e) => {
     e.stopPropagation(); // prevent any ancestor handlers from seeing this
+    if (state.hardModeUntil && Date.now() < state.hardModeUntil) return; // hard mode locks this
     if (!state.sessionUnlocked) { showModal('unlock'); return; }
 
     const newVal = !state.alwaysBlock;
@@ -552,6 +575,72 @@ async function savePomodoroSettings() {
 }
 
 // ─────────────────────────────────────────────────────────────
+// HARD MODE TAB
+// ─────────────────────────────────────────────────────────────
+
+function setupHardModeTab() {
+  document.getElementById('btn-hard-start').addEventListener('click', startHardMode);
+}
+
+function renderHardModeTab() {
+  clearInterval(hardCountdownInterval);
+
+  const hardActive = !!(state.hardModeUntil && Date.now() < state.hardModeUntil);
+  document.getElementById('hard-idle').style.display   = hardActive ? 'none'  : 'block';
+  document.getElementById('hard-active').style.display = hardActive ? 'block' : 'none';
+
+  if (!hardActive) return;
+
+  function tick() {
+    const remaining = Math.max(0, state.hardModeUntil - Date.now());
+    const totalSecs = Math.floor(remaining / 1000);
+    const h = Math.floor(totalSecs / 3600).toString().padStart(2, '0');
+    const m = Math.floor((totalSecs % 3600) / 60).toString().padStart(2, '0');
+    const s = (totalSecs % 60).toString().padStart(2, '0');
+    document.getElementById('hard-countdown').textContent = `${h}:${m}:${s}`;
+    if (remaining <= 0) {
+      clearInterval(hardCountdownInterval);
+      setTimeout(async () => {
+        await refreshState();
+        renderHardModeTab();
+        renderHeader();
+      }, 1500);
+    }
+  }
+  tick();
+  hardCountdownInterval = setInterval(tick, 500);
+}
+
+async function startHardMode() {
+  if (!state.sessionUnlocked) { showModal('unlock'); return; }
+
+  const hours   = Math.max(0, parseInt(document.getElementById('hard-hours').value)   || 0);
+  const minutes = Math.max(0, parseInt(document.getElementById('hard-minutes').value) || 0);
+  const durationMs = (hours * 60 + minutes) * 60 * 1000;
+
+  if (durationMs < 60000) {
+    alert('Set a duration of at least 1 minute.');
+    return;
+  }
+
+  const total = hours > 0
+    ? `${hours}h ${minutes}m`
+    : `${minutes} minute${minutes !== 1 ? 's' : ''}`;
+
+  showConfirm(
+    '🔥 Start Hard Mode?',
+    `Blocking will be locked for ${total}. You will NOT be able to stop it early — no toggles, no password bypass, no exceptions. Are you sure?`,
+    async () => {
+      const result = await send({ type: 'START_HARD_MODE', durationMs });
+      if (result.error) { alert(result.error); return; }
+      state.hardModeUntil = result.hardModeUntil;
+      renderHeader();
+      renderHardModeTab();
+    }
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
 // SETTINGS TAB
 // ─────────────────────────────────────────────────────────────
 
@@ -805,7 +894,11 @@ function setupModalButtons() {
     hideModal();
   });
   document.getElementById('btn-ctx-confirm').addEventListener('click', async () => {
-    const result = await send({ type: 'ADD_PENDING_CONTEXT_MENU_SITE' });
+    const btn      = document.getElementById('btn-ctx-confirm');
+    const isUnblock = btn.dataset.ctxUnblock === '1';
+    const result   = await send({
+      type: isUnblock ? 'REMOVE_PENDING_CONTEXT_MENU_SITE' : 'ADD_PENDING_CONTEXT_MENU_SITE'
+    });
     if (result.error) { alert(result.error); return; }
     state.blocklist = result.blocklist || state.blocklist;
     state.pendingContextMenuDomain = null;
@@ -822,8 +915,13 @@ function setupModalButtons() {
 function handlePendingContextMenu() {
   const pending = state.pendingContextMenuDomain;
   if (!pending) return;
-  document.getElementById('ctx-pending-msg').textContent =
-    `You right-clicked to block "${pending}". Add it to your blocklist now?`;
+  const isBlocked = (state.blocklist || []).includes(pending);
+  document.getElementById('ctx-pending-msg').textContent = isBlocked
+    ? `You right-clicked "${pending}" which is currently blocked. Remove it from your blocklist?`
+    : `You right-clicked to block "${pending}". Add it to your blocklist now?`;
+  const confirmBtn = document.getElementById('btn-ctx-confirm');
+  confirmBtn.textContent        = isBlocked ? 'Unblock It' : 'Block It';
+  confirmBtn.dataset.ctxUnblock = isBlocked ? '1' : '0';
   showModal('ctx-pending');
 }
 

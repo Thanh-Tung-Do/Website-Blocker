@@ -31,6 +31,16 @@ async function initExtension() {
 
   // Migrate single schedule → schedules array (one-time, idempotent)
   await migrateSchedule();
+
+  // Restore hard mode alarm if still active after restart
+  const { hardModeUntil } = await getLocal('hardModeUntil');
+  if (hardModeUntil && Date.now() < hardModeUntil) {
+    const existingHm = await chrome.alarms.get('hard_mode_end');
+    if (!existingHm) {
+      await chrome.alarms.create('hard_mode_end', { when: hardModeUntil });
+    }
+  }
+
   // Restore blocking rules based on current state
   // (when session is locked, rules left as-is from previous session — they persist natively)
   await updateBlockingRules();
@@ -157,6 +167,10 @@ function escapeRegex(str) {
 }
 
 async function isBlockingActive() {
+  // Hard mode overrides everything — if active, always block regardless of other modes
+  const { hardModeUntil } = await getLocal('hardModeUntil');
+  if (hardModeUntil && Date.now() < hardModeUntil) return true;
+
   const session = await getSession(['pomodoroRunning', 'pomodoroPhase']);
 
   // Pomodoro always wins: work = block, break = unblock (even overrides always-block)
@@ -271,6 +285,13 @@ async function saveBlocklist(blocklist, key) {
 // ─────────────────────────────────────────────────────────────
 
 async function updateBadge() {
+  const { hardModeUntil } = await getLocal('hardModeUntil');
+  if (hardModeUntil && Date.now() < hardModeUntil) {
+    await chrome.action.setBadgeText({ text: 'HM' });
+    await chrome.action.setBadgeBackgroundColor({ color: '#dc2626' });
+    return;
+  }
+
   const session = await getSession(['pomodoroRunning', 'pomodoroPhase']);
 
   if (session.pomodoroRunning) {
@@ -508,19 +529,72 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       type: 'basic',
       iconUrl: 'icons/icon48.png',
       title: 'Website Blocker — Locked',
-      message: `Open the extension popup and unlock to block ${domain}.`
+      message: `Open the extension popup and unlock to block/unblock ${domain}.`
     });
     return;
   }
 
-  await addSiteToBlocklist(domain);
+  const blocklist = (await getDecryptedBlocklist()) || [];
+  const isBlocked = blocklist.includes(domain);
 
-  chrome.notifications.create(`ctx_ok_${Date.now()}`, {
-    type: 'basic',
-    iconUrl: 'icons/icon48.png',
-    title: 'Website Blocked',
-    message: `${domain} has been added to your blocklist.`
+  if (isBlocked) {
+    await removeSiteFromBlocklist(domain);
+    chrome.notifications.create(`ctx_unblock_${Date.now()}`, {
+      type: 'basic',
+      iconUrl: 'icons/icon48.png',
+      title: 'Website Unblocked',
+      message: `${domain} has been removed from your blocklist.`
+    });
+    chrome.contextMenus.update('blockSite', { title: 'Block this website' });
+  } else {
+    await addSiteToBlocklist(domain);
+    chrome.notifications.create(`ctx_ok_${Date.now()}`, {
+      type: 'basic',
+      iconUrl: 'icons/icon48.png',
+      title: 'Website Blocked',
+      message: `${domain} has been added to your blocklist.`
+    });
+    chrome.contextMenus.update('blockSite', { title: 'Unblock this website' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// CONTEXT MENU — dynamic title (Block ↔ Unblock) based on active tab
+// ─────────────────────────────────────────────────────────────
+
+async function updateContextMenuTitle(tabId) {
+  let domain;
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (!tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) {
+      chrome.contextMenus.update('blockSite', { title: 'Block this website' });
+      return;
+    }
+    domain = new URL(tab.url).hostname.replace(/^www\./, '');
+  } catch { return; }
+
+  const blocklist = await getDecryptedBlocklist();
+  // If session is locked we can't read the blocklist — default to "Block"
+  if (blocklist === null) {
+    chrome.contextMenus.update('blockSite', { title: 'Block this website' });
+    return;
+  }
+  const isBlocked = blocklist.includes(domain);
+  chrome.contextMenus.update('blockSite', {
+    title: isBlocked ? 'Unblock this website' : 'Block this website'
   });
+}
+
+chrome.tabs.onActivated.addListener(async (activeInfo) => {
+  await updateContextMenuTitle(activeInfo.tabId);
+});
+
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
+  if (changeInfo.status !== 'complete') return;
+  try {
+    const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (activeTab && activeTab.id === tabId) await updateContextMenuTitle(tabId);
+  } catch { /* ignore */ }
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -533,6 +607,15 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   } else if (alarm.name === 'schedule_check') {
     // Re-evaluate schedule blocking every minute
     await updateBlockingRules();
+  } else if (alarm.name === 'hard_mode_end') {
+    await updateBlockingRules();
+    await updateBadge();
+    chrome.notifications.create(`hm_done_${Date.now()}`, {
+      type: 'basic',
+      iconUrl: 'icons/icon48.png',
+      title: '🔥 Hard Mode Complete!',
+      message: 'Your Hard Mode session has ended. Blocking is back to normal.'
+    });
   }
 });
 
@@ -559,7 +642,7 @@ async function handleMessage(message) {
       ]);
       const local = await getLocal([
         'schedules', 'pomodoroSettings',
-        'passwordHash', 'customQuotes', 'alwaysBlock'
+        'passwordHash', 'customQuotes', 'alwaysBlock', 'hardModeUntil'
       ]);
 
       // Blocklist comes from encrypted storage (decrypted with session key)
@@ -583,7 +666,10 @@ async function handleMessage(message) {
         pendingContextMenuDomain: session.pendingContextMenuDomain || null,
         // alwaysBlock defaults to true when not explicitly set
         alwaysBlock: local.alwaysBlock !== false,
-        blockingActive: await isBlockingActive()
+        blockingActive: await isBlockingActive(),
+        // Hard mode: return the end timestamp only if it's still in the future
+        hardModeUntil: (local.hardModeUntil && Date.now() < local.hardModeUntil)
+          ? local.hardModeUntil : null
       };
     }
 
@@ -730,10 +816,34 @@ async function handleMessage(message) {
       return { success: true };
     }
 
+    // ── Hard Mode ────────────────────────────────────────────
+    case 'START_HARD_MODE': {
+      if (!await isSessionUnlocked()) return { error: 'Session locked' };
+      const durationMs = message.durationMs;
+      if (!durationMs || durationMs < 60000) return { error: 'Minimum duration is 1 minute.' };
+      const hardModeUntil = Date.now() + durationMs;
+      await chrome.storage.local.set({ hardModeUntil });
+      await chrome.alarms.clear('hard_mode_end');
+      await chrome.alarms.create('hard_mode_end', { when: hardModeUntil });
+      await updateBlockingRules();
+      await updateBadge();
+      return { success: true, hardModeUntil };
+    }
+
     // ── Context menu: clear pending domain ───────────────────
     case 'CLEAR_PENDING_CONTEXT_MENU': {
       await chrome.storage.session.remove('pendingContextMenuDomain');
       return { success: true };
+    }
+
+    // ── Remove pending context menu domain (unblock via locked-session flow) ─
+    case 'REMOVE_PENDING_CONTEXT_MENU_SITE': {
+      if (!await isSessionUnlocked()) return { error: 'Session locked' };
+      const { pendingContextMenuDomain } = await getSession('pendingContextMenuDomain');
+      if (!pendingContextMenuDomain) return { success: false };
+      const blocklist = await removeSiteFromBlocklist(pendingContextMenuDomain);
+      await chrome.storage.session.remove('pendingContextMenuDomain');
+      return { success: true, blocklist };
     }
 
     // ── Add pending context menu domain ──────────────────────
@@ -758,6 +868,7 @@ async function handleMessage(message) {
       await chrome.storage.local.clear();
       await chrome.storage.session.clear();
       await chrome.alarms.clear('pomodoro_phase_end');
+      await chrome.alarms.clear('hard_mode_end');
       const existing = await chrome.declarativeNetRequest.getDynamicRules();
       if (existing.length > 0) {
         await chrome.declarativeNetRequest.updateDynamicRules({
