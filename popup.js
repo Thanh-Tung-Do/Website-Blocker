@@ -288,7 +288,25 @@ async function removeSite(domain) {
 }
 
 function exportBlocklist() {
-  if (!state.sessionUnlocked) { showModal('unlock'); return; }
+  if (!state.sessionUnlocked || !sitesRevealed) {
+    confirmWithPassword(
+      '🔒 Export Blocklist',
+      'Enter your master password to export your blocked sites.',
+      async () => {
+        state.sessionUnlocked = true;
+        await refreshState();
+        sitesRevealed = true;
+        renderSitesList();
+        doExport();
+      },
+      'Export'
+    );
+    return;
+  }
+  doExport();
+}
+
+function doExport() {
   const sites = state.blocklist || [];
   if (sites.length === 0) { alert('Your blocklist is empty.'); return; }
   const blob = new Blob([sites.join('\n')], { type: 'text/plain' });
