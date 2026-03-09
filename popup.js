@@ -21,7 +21,10 @@ let state = null;
 let countdownInterval = null;
 let selectedDays = new Set([1, 2, 3, 4, 5]);
 
-// Generic password-confirmation
+// Per-popup: whether the blocklist has been revealed this session
+let sitesRevealed = false;
+
+// Generic "confirm with password" callback
 let pendingPasswordCallback = null;
 
 // ─────────────────────────────────────────────────────────────
@@ -45,38 +48,22 @@ async function refreshState() {
   state = await send({ type: 'GET_STATE' });
 }
 
-// Keep popup in sync when the background updates storage
-// (e.g. context-menu adds a domain while the popup is already open)
-chrome.storage.onChanged.addListener((changes, area) => {
-  if (!state) return;
-  if (area === 'local') {
-    if (changes.blockLists)              state.blockLists              = changes.blockLists.newValue;
-    if (changes.alwaysBlock)             state.alwaysBlock             = changes.alwaysBlock.newValue !== false;
-    if (changes.requirePasswordToDisable) state.requirePasswordToDisable = changes.requirePasswordToDisable.newValue !== false;
-  }
-  if (area === 'session') {
-    if (changes.pomodoroRunning || changes.pomodoroPhase || changes.pomodoroEndTime) {
-      // Re-fetch full state so Pomodoro UI stays accurate
-      refreshState().then(() => { renderPomodoroTab(); renderHeader(); });
-      return;
-    }
-  }
-  if (area === 'local' && (changes.blockLists || changes.alwaysBlock)) {
-    renderHeader();
-    renderSiteList();
-  }
-});
-
 // ─────────────────────────────────────────────────────────────
 // RENDER ROUTER
 // ─────────────────────────────────────────────────────────────
 
 function renderUI() {
-  if (!state.hasPassword)     { showModal('setup');  return; }
-  if (!state.sessionUnlocked) { showModal('unlock'); return; }
+  if (!state.hasPassword) {
+    showModal('setup');
+    return;
+  }
+  if (!state.sessionUnlocked) {
+    showModal('unlock');
+    return;
+  }
   hideModal();
   renderHeader();
-  renderSiteList();
+  renderSitesList();
   renderScheduleTab();
   renderPomodoroTab();
   renderSettingsTab();
@@ -91,6 +78,8 @@ function renderHeader() {
   const pill  = document.getElementById('block-pill');
   const label = document.getElementById('block-pill-label');
   const on    = !!state.alwaysBlock;
+
+  // Pure CSS classes — no checkbox to sync
   pill.classList.toggle('on',  on);
   pill.classList.toggle('off', !on);
   label.textContent = on ? 'Blocking: ON' : 'Blocking: OFF';
@@ -98,55 +87,27 @@ function renderHeader() {
 
 // ─────────────────────────────────────────────────────────────
 // ALWAYS-BLOCK TOGGLE
-// Turning ON  → no password needed
-// Turning OFF → password required (when requirePasswordToDisable=true)
 // ─────────────────────────────────────────────────────────────
 
 function setupBlockToggle() {
   document.getElementById('block-pill').addEventListener('click', async (e) => {
-    e.stopPropagation();
+    e.stopPropagation(); // prevent any ancestor handlers from seeing this
     if (!state.sessionUnlocked) { showModal('unlock'); return; }
 
     const newVal = !state.alwaysBlock;
 
-    if (!newVal) {
-      // Turning OFF — may require password
-      maybeRequirePassword(
-        '🔒 Turn Off Blocking',
-        'Enter your password to disable always-block mode.',
-        () => applyAlwaysBlock(false)
-      );
-    } else {
-      // Turning ON — no password
-      await applyAlwaysBlock(true);
+    // Optimistically update the UI immediately — feels instant
+    state.alwaysBlock = newVal;
+    renderHeader();
+
+    const result = await send({ type: 'SET_ALWAYS_BLOCK', enabled: newVal });
+    if (result && result.error) {
+      // Revert on failure
+      state.alwaysBlock = !newVal;
+      renderHeader();
+      alert(result.error);
     }
   });
-}
-
-async function applyAlwaysBlock(newVal) {
-  // Optimistic update
-  state.alwaysBlock = newVal;
-  renderHeader();
-  const result = await send({ type: 'SET_ALWAYS_BLOCK', enabled: newVal });
-  if (result && result.error) {
-    state.alwaysBlock = !newVal;
-    renderHeader();
-    alert(result.error);
-  }
-}
-
-// ─────────────────────────────────────────────────────────────
-// CONDITIONAL PASSWORD GATE
-// When requirePasswordToDisable is true  → show password modal
-// When requirePasswordToDisable is false → run callback directly
-// ─────────────────────────────────────────────────────────────
-
-function maybeRequirePassword(title, body, callback) {
-  if (state.requirePasswordToDisable) {
-    confirmWithPassword(title, body, callback);
-  } else {
-    Promise.resolve().then(callback);
-  }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -165,9 +126,13 @@ function setupTabs() {
 }
 
 // ─────────────────────────────────────────────────────────────
-// GENERIC PASSWORD CONFIRMATION MODAL
+// GENERIC PASSWORD CONFIRMATION
 // ─────────────────────────────────────────────────────────────
 
+// Shows the "reveal" modal repurposed as a generic password gate.
+// title   — heading text
+// body    — instruction paragraph
+// callback — async fn called only if password is verified
 function confirmWithPassword(title, body, callback) {
   pendingPasswordCallback = callback;
   document.getElementById('reveal-modal-title').textContent = title;
@@ -186,31 +151,18 @@ function setupSitesTab() {
   document.getElementById('site-input').addEventListener('keydown', e => {
     if (e.key === 'Enter') addSite();
   });
-}
 
-function renderSiteList() {
-  const siteList  = document.getElementById('site-list');
-  const emptyMsg  = document.getElementById('site-empty');
-  const countEl   = document.getElementById('sites-count');
+  document.getElementById('btn-reveal-sites').addEventListener('click', () => {
+    confirmWithPassword(
+      '🔒 Reveal Blocklist',
+      'Enter your master password to view the list of blocked sites.',
+      () => { sitesRevealed = true; renderSitesList(); }
+    );
+  });
 
-  const defaultList = (state.blockLists || []).find(l => l.id === 'default');
-  const domains     = defaultList ? (defaultList.domains || []) : [];
-
-  countEl.textContent = domains.length === 0 ? '' : `${domains.length} site${domains.length !== 1 ? 's' : ''} blocked`;
-  siteList.innerHTML  = '';
-
-  if (domains.length === 0) {
-    emptyMsg.style.display = 'block';
-    return;
-  }
-
-  emptyMsg.style.display = 'none';
-  domains.forEach(domain => {
-    const item = document.createElement('div');
-    item.className = 'site-item';
-    item.innerHTML = `<span title="${escapeHtml(domain)}">${escapeHtml(domain)}</span><button title="Remove">✕</button>`;
-    item.querySelector('button').addEventListener('click', () => removeSite(domain));
-    siteList.appendChild(item);
+  document.getElementById('btn-hide-sites').addEventListener('click', () => {
+    sitesRevealed = false;
+    renderSitesList();
   });
 }
 
@@ -231,21 +183,58 @@ async function addSite() {
     return;
   }
 
-  const result = await send({ type: 'ADD_SITE_TO_LIST', domain, listId: 'default' });
+  const result = await send({ type: 'ADD_SITE', domain });
   if (result.error) { alert(result.error); return; }
 
-  input.value      = '';
-  state.blockLists = result.blockLists;
-  renderSiteList();
+  input.value    = '';
+  state.blocklist = result.blocklist;
+  renderSitesList();
+}
+
+function renderSitesList() {
+  const hiddenState    = document.getElementById('sites-hidden-state');
+  const listContainer  = document.getElementById('site-list-container');
+  const countText      = document.getElementById('sites-count-text');
+  const list           = document.getElementById('site-list');
+  const empty          = document.getElementById('site-empty');
+  const sites          = state.blocklist || [];
+
+  const n = sites.length;
+  countText.textContent = n === 0
+    ? 'No sites blocked yet'
+    : `${n} site${n !== 1 ? 's' : ''} blocked`;
+
+  if (!sitesRevealed) {
+    hiddenState.style.display   = 'block';
+    listContainer.style.display = 'none';
+    return;
+  }
+
+  hiddenState.style.display   = 'none';
+  listContainer.style.display = 'block';
+  list.innerHTML = '';
+
+  if (sites.length === 0) {
+    empty.style.display = 'block';
+    return;
+  }
+
+  empty.style.display = 'none';
+  sites.forEach(domain => {
+    const item = document.createElement('div');
+    item.className = 'site-item';
+    item.innerHTML = `<span title="${escapeHtml(domain)}">${escapeHtml(domain)}</span><button title="Remove">✕</button>`;
+    item.querySelector('button').addEventListener('click', () => removeSite(domain));
+    list.appendChild(item);
+  });
 }
 
 async function removeSite(domain) {
   if (!state.sessionUnlocked) { showModal('unlock'); return; }
-
-  const result = await send({ type: 'REMOVE_SITE_FROM_LIST', domain, listId: 'default' });
+  const result = await send({ type: 'REMOVE_SITE', domain });
   if (result.error) { alert(result.error); return; }
-  state.blockLists = result.blockLists;
-  renderSiteList();
+  state.blocklist = result.blocklist;
+  renderSitesList();
 }
 
 function showInlineError(inputId, msg) {
@@ -256,7 +245,7 @@ function showInlineError(inputId, msg) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// SCHEDULE TAB — always requires password to save
+// SCHEDULE TAB  — every save requires password re-entry
 // ─────────────────────────────────────────────────────────────
 
 function setupScheduleTab() {
@@ -267,14 +256,16 @@ function setupScheduleTab() {
       else                        { selectedDays.add(day);    btn.classList.add('selected'); }
     });
   });
+
   document.getElementById('btn-save-schedule').addEventListener('click', saveSchedule);
 }
 
 function renderScheduleTab() {
   const sched = state.schedule || {};
-  document.getElementById('schedule-enabled').checked = !!sched.enabled;
-  document.getElementById('schedule-start').value     = sched.startTime || '09:00';
-  document.getElementById('schedule-end').value       = sched.endTime   || '17:00';
+  document.getElementById('schedule-enabled').checked    = !!sched.enabled;
+  document.getElementById('schedule-start').value        = sched.startTime || '09:00';
+  document.getElementById('schedule-end').value          = sched.endTime   || '17:00';
+
   selectedDays = new Set(sched.days || [1, 2, 3, 4, 5]);
   document.querySelectorAll('.day-btn').forEach(btn => {
     btn.classList.toggle('selected', selectedDays.has(parseInt(btn.dataset.day)));
@@ -283,15 +274,18 @@ function renderScheduleTab() {
 
 function saveSchedule() {
   if (!state.sessionUnlocked) { showModal('unlock'); return; }
+
+  // Capture the current form values NOW (before the modal opens)
   const schedule = {
     enabled:   document.getElementById('schedule-enabled').checked,
     startTime: document.getElementById('schedule-start').value,
     endTime:   document.getElementById('schedule-end').value,
     days:      [...selectedDays]
   };
+
   confirmWithPassword(
     '🔒 Save Schedule',
-    'Enter your password to save changes to the blocking schedule.',
+    'Enter your master password to save changes to the blocking schedule.',
     async () => {
       const result = await send({ type: 'UPDATE_SCHEDULE', schedule });
       if (result.error) { alert(result.error); return; }
@@ -303,20 +297,20 @@ function saveSchedule() {
 
 // ─────────────────────────────────────────────────────────────
 // POMODORO TAB
-// Start → no password. Stop → may require password.
 // ─────────────────────────────────────────────────────────────
 
 function setupPomodoroTab() {
   document.getElementById('btn-pomo-start').addEventListener('click', startPomodoro);
-  document.getElementById('btn-pomo-stop').addEventListener('click',  stopPomodoro);
-  document.getElementById('btn-save-pomo').addEventListener('click',  savePomodoroSettings);
+  document.getElementById('btn-pomo-stop').addEventListener('click', stopPomodoro);
+  document.getElementById('btn-save-pomo').addEventListener('click', savePomodoroSettings);
 }
 
 function renderPomodoroTab() {
   clearInterval(countdownInterval);
+
   const pomo = state.pomodoro;
-  document.getElementById('pomo-work').value   = pomo.settings.workDuration  || 25;
-  document.getElementById('pomo-break').value  = pomo.settings.breakDuration || 5;
+  document.getElementById('pomo-work').value  = pomo.settings.workDuration  || 25;
+  document.getElementById('pomo-break').value = pomo.settings.breakDuration || 5;
   document.getElementById('pomo-sessions').textContent = `Sessions completed: ${pomo.sessionCount || 0}`;
 
   const startBtn = document.getElementById('btn-pomo-start');
@@ -339,12 +333,15 @@ function startCountdownTick() {
   function tick() {
     const pomo = state.pomodoro;
     if (!pomo.running || !pomo.endTime) return;
+
     const remaining = Math.max(0, pomo.endTime - Date.now());
     const secs = Math.floor(remaining / 1000);
+
     document.getElementById('pomo-countdown').textContent = formatTime(secs);
     document.getElementById('pomo-phase').textContent     = pomo.phase === 'work' ? 'Work' : 'Break';
     document.getElementById('pomo-countdown').className   =
       `pomo-countdown ${pomo.phase === 'work' ? 'work' : 'break'}`;
+
     if (remaining <= 0) {
       clearInterval(countdownInterval);
       setTimeout(async () => { await refreshState(); renderPomodoroTab(); renderHeader(); }, 1500);
@@ -362,7 +359,6 @@ function formatTime(totalSeconds) {
 
 async function startPomodoro() {
   if (!state.sessionUnlocked) { showModal('unlock'); return; }
-  // Start: no password required
   const result = await send({ type: 'START_POMODORO' });
   if (result.error) { alert(result.error); return; }
   await refreshState();
@@ -370,12 +366,11 @@ async function startPomodoro() {
   renderHeader();
 }
 
-function stopPomodoro() {
+async function stopPomodoro() {
   if (!state.sessionUnlocked) { showModal('unlock'); return; }
-  // Stop: may require password
-  maybeRequirePassword(
-    '🔒 Stop Pomodoro',
-    'Enter your password to stop the current Pomodoro session.',
+  showConfirm(
+    'Stop Pomodoro?',
+    'This will end the current session and restore normal blocking mode.',
     async () => {
       const result = await send({ type: 'STOP_POMODORO' });
       if (result.error) { alert(result.error); return; }
@@ -403,39 +398,15 @@ async function savePomodoroSettings() {
 // ─────────────────────────────────────────────────────────────
 
 function setupSettingsTab() {
-  // Security: require-password-to-disable toggle
-  document.getElementById('require-pw-toggle').addEventListener('change', (e) => {
-    const newVal = e.target.checked;
-    if (!newVal && state.requirePasswordToDisable) {
-      // Turning OFF (weakening security) always requires password regardless of the setting
-      e.target.checked = true; // revert visually
-      confirmWithPassword(
-        '🔒 Reduce Security',
-        'Enter your password to allow disabling blocking features without re-entering your password.',
-        async () => {
-          const result = await send({ type: 'SET_REQUIRE_PASSWORD_TO_DISABLE', enabled: false });
-          if (result.error) { alert(result.error); return; }
-          state.requirePasswordToDisable = false;
-          document.getElementById('require-pw-toggle').checked = false;
-        }
-      );
-    } else if (newVal) {
-      // Turning ON — no password
-      send({ type: 'SET_REQUIRE_PASSWORD_TO_DISABLE', enabled: true }).then(result => {
-        if (result.error) { alert(result.error); return; }
-        state.requirePasswordToDisable = true;
-      });
-    }
-  });
-
   document.getElementById('btn-change-pw').addEventListener('click', changePassword);
   document.getElementById('btn-add-quote').addEventListener('click', addCustomQuote);
   document.getElementById('btn-reset').addEventListener('click', () => {
     showConfirm(
       'Reset All Settings?',
-      'This permanently erases your blocklist, schedule, password, and all settings. Cannot be undone.',
+      'This permanently erases your blocklist, schedule, password, and all settings. This cannot be undone.',
       async () => {
         await send({ type: 'RESET_ALL' });
+        sitesRevealed = false;
         await refreshState();
         renderUI();
       }
@@ -444,15 +415,16 @@ function setupSettingsTab() {
 }
 
 function renderSettingsTab() {
-  document.getElementById('require-pw-toggle').checked = !!state.requirePasswordToDisable;
   renderCustomQuotes();
 }
 
 async function changePassword() {
   if (!state.sessionUnlocked) { showModal('unlock'); return; }
+
   const currentPw = document.getElementById('current-password').value;
   const newPw     = document.getElementById('new-password').value;
   const confirmPw = document.getElementById('confirm-password').value;
+
   if (!currentPw)          return alert('Enter your current password.');
   if (!newPw)              return alert('Enter a new password.');
   if (newPw.length < 4)   return alert('New password must be at least 4 characters.');
@@ -460,6 +432,7 @@ async function changePassword() {
 
   const result = await send({ type: 'CHANGE_PASSWORD', currentPassword: currentPw, newPassword: newPw });
   if (result.error) { alert(result.error); return; }
+
   document.getElementById('current-password').value = '';
   document.getElementById('new-password').value     = '';
   document.getElementById('confirm-password').value = '';
@@ -471,8 +444,10 @@ async function addCustomQuote() {
   const text   = document.getElementById('quote-text').value.trim();
   const author = document.getElementById('quote-author').value.trim();
   if (!text) return alert('Enter a quote.');
+
   const result = await send({ type: 'ADD_CUSTOM_QUOTE', quote: { text, author: author || 'Unknown' } });
   if (result.error) { alert(result.error); return; }
+
   state.customQuotes = result.customQuotes;
   document.getElementById('quote-text').value   = '';
   document.getElementById('quote-author').value = '';
@@ -491,10 +466,12 @@ function renderCustomQuotes() {
   const list   = document.getElementById('quote-list');
   const quotes = state.customQuotes || [];
   list.innerHTML = '';
+
   if (quotes.length === 0) {
     list.innerHTML = '<div style="font-size:11px;color:var(--text-muted);padding:8px 0">No custom quotes added yet.</div>';
     return;
   }
+
   quotes.forEach((q, i) => {
     const item = document.createElement('div');
     item.className = 'quote-item';
@@ -515,6 +492,7 @@ function setupLockButton() {
   document.getElementById('btn-lock').addEventListener('click', async () => {
     await send({ type: 'LOCK_SESSION' });
     state.sessionUnlocked = false;
+    sitesRevealed = false;
     pendingPasswordCallback = null;
     renderUI();
   });
@@ -547,34 +525,42 @@ function showConfirm(title, body, onConfirm) {
 
 function setupModalButtons() {
 
-  // ── Setup password (first run) ───────────────────────────────
+  // ── Setup password ───────────────────────────────────────────
   document.getElementById('btn-setup-submit').addEventListener('click', async () => {
     const pw1 = document.getElementById('setup-pw1').value;
     const pw2 = document.getElementById('setup-pw2').value;
     const err = document.getElementById('setup-error');
     err.classList.remove('visible');
+
     if (!pw1)           { showError(err, 'Please enter a password.'); return; }
     if (pw1.length < 4) { showError(err, 'Password must be at least 4 characters.'); return; }
     if (pw1 !== pw2)    { showError(err, 'Passwords do not match.'); return; }
+
     const result = await send({ type: 'SETUP_PASSWORD', password: pw1 });
     if (result.error)   { showError(err, result.error); return; }
-    state.hasPassword = true; state.sessionUnlocked = true;
+
+    state.hasPassword     = true;
+    state.sessionUnlocked = true;
     await refreshState();
     renderUI();
   });
+
   ['setup-pw1', 'setup-pw2'].forEach(id => {
     document.getElementById(id).addEventListener('keydown', e => {
       if (e.key === 'Enter') document.getElementById('btn-setup-submit').click();
     });
   });
 
-  // ── Unlock ──────────────────────────────────────────────────
+  // ── Unlock session ───────────────────────────────────────────
   document.getElementById('btn-unlock-submit').addEventListener('click', async () => {
     const pw  = document.getElementById('unlock-pw').value;
     const err = document.getElementById('unlock-error');
     err.classList.remove('visible');
+
     if (!pw) { showError(err, 'Enter your password.'); return; }
+
     const result = await send({ type: 'VERIFY_PASSWORD', password: pw });
+
     if (result.success) {
       state.sessionUnlocked = true;
       await refreshState();
@@ -585,39 +571,47 @@ function setupModalButtons() {
       showError(err, `Incorrect password. ${result.attemptsRemaining} attempt(s) remaining.`);
     }
   });
+
   document.getElementById('unlock-pw').addEventListener('keydown', e => {
     if (e.key === 'Enter') document.getElementById('btn-unlock-submit').click();
   });
+
   document.getElementById('btn-unlock-forgot').addEventListener('click', () => showModal('forgot'));
 
   // ── Forgot / reset ───────────────────────────────────────────
   document.getElementById('btn-forgot-cancel').addEventListener('click',  () => showModal('unlock'));
   document.getElementById('btn-forgot-confirm').addEventListener('click', async () => {
     await send({ type: 'RESET_ALL' });
+    sitesRevealed = false;
     await refreshState();
     renderUI();
   });
 
-  // ── Generic confirm ──────────────────────────────────────────
+  // ── Generic confirm (yes/no) ─────────────────────────────────
   document.getElementById('btn-confirm-cancel').addEventListener('click', () => {
-    confirmCallback = null; hideModal();
+    confirmCallback = null;
+    hideModal();
   });
   document.getElementById('btn-confirm-ok').addEventListener('click', async () => {
     hideModal();
     if (confirmCallback) { const cb = confirmCallback; confirmCallback = null; await cb(); }
   });
 
-  // ── Password-confirm (reveal + schedule + disable actions) ───
+  // ── Password-confirm modal (reveal + schedule + other actions) ──
   document.getElementById('btn-reveal-submit').addEventListener('click', async () => {
     const pw  = document.getElementById('reveal-pw').value;
     const err = document.getElementById('reveal-error');
     err.classList.remove('visible');
+
     if (!pw) { showError(err, 'Enter your password.'); return; }
+
     const result = await send({ type: 'VERIFY_PASSWORD', password: pw });
+
     if (result.success) {
       hideModal();
       if (pendingPasswordCallback) {
-        const cb = pendingPasswordCallback; pendingPasswordCallback = null;
+        const cb = pendingPasswordCallback;
+        pendingPasswordCallback = null;
         await cb();
       }
     } else if (result.locked) {
@@ -626,9 +620,11 @@ function setupModalButtons() {
       showError(err, `Incorrect password. ${result.attemptsRemaining} attempt(s) remaining.`);
     }
   });
+
   document.getElementById('reveal-pw').addEventListener('keydown', e => {
     if (e.key === 'Enter') document.getElementById('btn-reveal-submit').click();
   });
+
   document.getElementById('btn-reveal-cancel').addEventListener('click', () => {
     pendingPasswordCallback = null;
     document.getElementById('reveal-pw').value = '';
@@ -638,15 +634,17 @@ function setupModalButtons() {
   // ── Context menu pending ─────────────────────────────────────
   document.getElementById('btn-ctx-cancel').addEventListener('click', async () => {
     await send({ type: 'CLEAR_PENDING_CONTEXT_MENU' });
-    state.pendingContextMenuDomain = null; hideModal();
+    state.pendingContextMenuDomain = null;
+    hideModal();
   });
   document.getElementById('btn-ctx-confirm').addEventListener('click', async () => {
     const result = await send({ type: 'ADD_PENDING_CONTEXT_MENU_SITE' });
     if (result.error) { alert(result.error); return; }
-    state.blockLists = result.blockLists || state.blockLists;
+    state.blocklist = result.blocklist || state.blocklist;
     state.pendingContextMenuDomain = null;
     hideModal();
-    renderSiteList();
+    renderSitesList();
+    renderHeader();
   });
 }
 
@@ -658,7 +656,7 @@ function handlePendingContextMenu() {
   const pending = state.pendingContextMenuDomain;
   if (!pending) return;
   document.getElementById('ctx-pending-msg').textContent =
-    `You right-clicked to block "${pending}". Add it to your Default list?`;
+    `You right-clicked to block "${pending}". Add it to your blocklist now?`;
   showModal('ctx-pending');
 }
 

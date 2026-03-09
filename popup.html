@@ -155,8 +155,6 @@
 
     .empty-msg { text-align: center; color: var(--text-muted); padding: 24px 0; font-size: 12px; }
 
-    .sites-count { font-size: 11px; color: var(--text-muted); padding: 2px 0 6px; }
-
     /* ── Schedule tab ── */
     .toggle-row { display: flex; align-items: center; justify-content: space-between; }
 
@@ -279,11 +277,6 @@
 
     .divider { height: 1px; background: var(--border); }
 
-    /* ── Block-list count bar ── */
-    .sites-header {
-      display: flex; align-items: center; justify-content: space-between;
-    }
-
     /* ── Always-block toggle pill in header ── */
     .block-pill {
       display: flex; align-items: center; gap: 7px;
@@ -316,6 +309,24 @@
     .block-pill.on .pill-track { background: var(--accent); }
     .block-pill.on .pill-thumb { transform: translateX(14px); }
 
+    /* ── Sites hidden state ── */
+    .sites-hidden {
+      display: flex; flex-direction: column; align-items: center;
+      gap: 10px; padding: 24px 0;
+      color: var(--text-muted); text-align: center;
+    }
+    .sites-hidden .lock-icon { font-size: 28px; }
+    .sites-hidden .count-text { font-size: 13px; color: var(--text); font-weight: 500; }
+    .sites-hidden .sub-text   { font-size: 11px; color: var(--text-muted); }
+    .sites-reveal-bar {
+      display: flex; justify-content: flex-end; margin-bottom: 4px;
+    }
+    .btn-link {
+      background: none; border: none; cursor: pointer;
+      color: var(--text-muted); font-size: 11px; padding: 2px 4px;
+      border-radius: 4px;
+    }
+    .btn-link:hover { color: var(--text); text-decoration: underline; }
   </style>
 </head>
 <body>
@@ -348,23 +359,34 @@
 
   <!-- ─── SITES TAB ─── -->
   <div class="tab-panel active" id="tab-sites">
-
-    <!-- Add domain row -->
     <div class="row">
       <div style="flex:1">
-        <label for="site-input">Block a website</label>
+        <label for="site-input">Domain to block</label>
         <input type="text" id="site-input" placeholder="e.g. reddit.com" autocomplete="off" />
       </div>
       <button class="btn btn-primary" id="btn-add-site" style="margin-bottom:0">Add</button>
     </div>
 
-    <!-- Site list -->
-    <div id="sites-count" class="sites-count"></div>
-    <div class="site-list" id="site-list"></div>
-    <div class="empty-msg" id="site-empty" style="display:none">
-      No sites blocked yet.<br/>Add a domain above.
+    <!-- Hidden state (default) -->
+    <div id="sites-hidden-state">
+      <div class="sites-hidden">
+        <span class="lock-icon">🔒</span>
+        <span class="count-text" id="sites-count-text">0 sites blocked</span>
+        <span class="sub-text">Enter your password to view the list</span>
+        <button class="btn btn-ghost" id="btn-reveal-sites">Reveal Blocked Sites</button>
+      </div>
     </div>
 
+    <!-- Revealed state (shown after password confirmation) -->
+    <div id="site-list-container" style="display:none">
+      <div class="sites-reveal-bar">
+        <button class="btn-link" id="btn-hide-sites">Hide list</button>
+      </div>
+      <div class="site-list" id="site-list"></div>
+      <div class="empty-msg" id="site-empty" style="display:none">
+        No sites blocked yet.<br/>Add a domain above to get started.
+      </div>
+    </div>
   </div>
 
   <!-- ─── SCHEDULE TAB ─── -->
@@ -441,21 +463,6 @@
   <!-- ─── SETTINGS TAB ─── -->
   <div class="tab-panel" id="tab-settings">
 
-    <div class="section-title">Security</div>
-    <div class="toggle-row">
-      <div>
-        <div style="font-weight:600;font-size:13px">Require password to disable</div>
-        <div style="font-size:11px;color:var(--text-muted);margin-top:2px;line-height:1.4">
-          When ON, turning off blocking, stopping Pomodoro, or deleting lists requires your password.
-        </div>
-      </div>
-      <label class="toggle" style="flex-shrink:0;margin-left:12px">
-        <input type="checkbox" id="require-pw-toggle" checked />
-        <span class="toggle-slider"></span>
-      </label>
-    </div>
-
-    <div class="divider"></div>
     <div class="section-title">Password</div>
     <div>
       <label for="current-password">Current password</label>

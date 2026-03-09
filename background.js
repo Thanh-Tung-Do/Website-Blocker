@@ -1,6 +1,5 @@
 // background.js — MV3 Service Worker
-// Handles: blocking rules, multiple block lists, Pomodoro timer,
-// schedule, context menu, master password session.
+// Handles: blocking rules, Pomodoro timer, schedule, context menu, master password session.
 
 // ─────────────────────────────────────────────────────────────
 // INITIALISATION
@@ -15,6 +14,7 @@ chrome.runtime.onStartup.addListener(async () => {
 });
 
 async function initExtension() {
+  // Register context menu (remove first to avoid duplicates)
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
       id: 'blockSite',
@@ -23,14 +23,13 @@ async function initExtension() {
     });
   });
 
+  // Ensure schedule checker alarm exists
   const existing = await chrome.alarms.get('schedule_check');
   if (!existing) {
     chrome.alarms.create('schedule_check', { periodInMinutes: 1 });
   }
 
-  // Migrate legacy flat blocklist → blockLists if needed
-  await getBlockLists();
-
+  // Restore blocking rules based on current state
   await updateBlockingRules();
   await updateBadge();
 }
@@ -47,33 +46,6 @@ async function getSession(keys) {
   return chrome.storage.session.get(keys);
 }
 
-// Lazy-migrating accessor for blockLists.
-// Converts the old flat `blocklist` array the first time it's called.
-async function getBlockLists() {
-  const data = await getLocal(['blockLists', 'blocklist']);
-  if (data.blockLists) return data.blockLists;
-
-  // First-run or migration from legacy flat list
-  const lists = [{
-    id: 'default',
-    name: 'Default',
-    enabled: true,
-    domains: data.blocklist || []
-  }];
-  await chrome.storage.local.set({ blockLists: lists });
-  if (data.blocklist) await chrome.storage.local.remove('blocklist');
-  return lists;
-}
-
-// Effective domains = union of all enabled lists
-function effectiveDomains(blockLists) {
-  return [...new Set(
-    blockLists
-      .filter(l => l.enabled)
-      .flatMap(l => l.domains || [])
-  )];
-}
-
 // ─────────────────────────────────────────────────────────────
 // BLOCKING LOGIC
 // ─────────────────────────────────────────────────────────────
@@ -85,16 +57,16 @@ function escapeRegex(str) {
 async function isBlockingActive() {
   const session = await getSession(['pomodoroRunning', 'pomodoroPhase']);
 
-  // Pomodoro always wins: work = block, break = unblock
+  // Pomodoro always wins: work = block, break = unblock (even overrides always-block)
   if (session.pomodoroRunning) {
     return session.pomodoroPhase === 'work';
   }
 
-  // Always-block mode (default true when not explicitly set)
+  // Always-block mode — on by default (undefined === true)
   const { alwaysBlock } = await getLocal('alwaysBlock');
   if (alwaysBlock !== false) return true;
 
-  // Fallback to schedule
+  // alwaysBlock explicitly disabled → fall back to schedule
   return await isScheduleActive();
 }
 
@@ -103,15 +75,17 @@ async function isScheduleActive() {
   if (!schedule || !schedule.enabled) return false;
 
   const now = new Date();
-  const day = now.getDay();
+  const day = now.getDay(); // 0=Sun … 6=Sat
+
   if (!schedule.days || !schedule.days.includes(day)) return false;
 
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
   const [startH, startM] = schedule.startTime.split(':').map(Number);
-  const [endH, endM]     = schedule.endTime.split(':').map(Number);
+  const [endH, endM] = schedule.endTime.split(':').map(Number);
   const startMinutes = startH * 60 + startM;
-  const endMinutes   = endH * 60 + endM;
+  const endMinutes = endH * 60 + endM;
 
+  // Handle overnight schedules (e.g. 22:00 → 06:00)
   if (startMinutes <= endMinutes) {
     return currentMinutes >= startMinutes && currentMinutes < endMinutes;
   } else {
@@ -120,29 +94,33 @@ async function isScheduleActive() {
 }
 
 async function updateBlockingRules() {
-  const active     = await isBlockingActive();
-  const blockLists = await getBlockLists();
-  const domains    = effectiveDomains(blockLists);
+  const active = await isBlockingActive();
+  const { blocklist = [] } = await getLocal('blocklist');
 
+  // Remove all existing dynamic rules first
   const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
   const removeRuleIds = existingRules.map(r => r.id);
 
-  if (!active || domains.length === 0) {
+  if (!active || blocklist.length === 0) {
     if (removeRuleIds.length > 0) {
       await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds, addRules: [] });
     }
     return;
   }
 
-  const extId    = chrome.runtime.id;
-  const addRules = domains.map((domain, index) => ({
+  const extId = chrome.runtime.id;
+
+  const addRules = blocklist.map((domain, index) => ({
     id: index + 1,
     priority: 1,
     action: {
       type: 'redirect',
-      redirect: { url: `chrome-extension://${extId}/blocked.html?site=${encodeURIComponent(domain)}` }
+      redirect: {
+        url: `chrome-extension://${extId}/blocked.html?site=${encodeURIComponent(domain)}`
+      }
     },
     condition: {
+      // Matches domain and all subdomains, not URL query params
       regexFilter: `^https?://(?:[^/?#]*\\.)?${escapeRegex(domain)}(?:[/?#].*)?$`,
       resourceTypes: ['main_frame']
     }
@@ -157,6 +135,7 @@ async function updateBlockingRules() {
 
 async function updateBadge() {
   const session = await getSession(['pomodoroRunning', 'pomodoroPhase']);
+
   if (session.pomodoroRunning) {
     if (session.pomodoroPhase === 'work') {
       await chrome.action.setBadgeText({ text: 'W' });
@@ -177,7 +156,7 @@ async function updateBadge() {
 async function startPomodoro() {
   const { pomodoroSettings = {} } = await getLocal('pomodoroSettings');
   const workDuration = pomodoroSettings.workDuration ?? 25;
-  const endTime      = Date.now() + workDuration * 60 * 1000;
+  const endTime = Date.now() + workDuration * 60 * 1000;
 
   await chrome.storage.session.set({
     pomodoroRunning: true,
@@ -198,49 +177,59 @@ async function stopPomodoro() {
     pomodoroPhase: 'idle',
     pomodoroEndTime: null
   });
+
   await chrome.alarms.clear('pomodoro_phase_end');
   await updateBlockingRules();
   await updateBadge();
 }
 
 async function handlePomodoroAlarm() {
-  const session = await getSession(['pomodoroPhase', 'pomodoroSessionCount', 'pomodoroRunning']);
+  const session = await getSession([
+    'pomodoroPhase', 'pomodoroSessionCount', 'pomodoroRunning'
+  ]);
+
   if (!session.pomodoroRunning) return;
 
   const { pomodoroSettings = {} } = await getLocal('pomodoroSettings');
-  const workDuration  = pomodoroSettings.workDuration  ?? 25;
+  const workDuration = pomodoroSettings.workDuration ?? 25;
   const breakDuration = pomodoroSettings.breakDuration ?? 5;
 
   if (session.pomodoroPhase === 'work') {
-    const sessionCount  = (session.pomodoroSessionCount || 0) + 1;
-    const breakEndTime  = Date.now() + breakDuration * 60 * 1000;
+    // Work ended → start break
+    const sessionCount = (session.pomodoroSessionCount || 0) + 1;
+    const breakEndTime = Date.now() + breakDuration * 60 * 1000;
 
     await chrome.storage.session.set({
       pomodoroPhase: 'break',
       pomodoroEndTime: breakEndTime,
       pomodoroSessionCount: sessionCount
     });
+
     await chrome.alarms.create('pomodoro_phase_end', { when: breakEndTime });
 
-    chrome.notifications.create(`pomo_${Date.now()}`, {
-      type: 'basic', iconUrl: 'icons/icon48.png',
+    chrome.notifications.create(`pomodoro_${Date.now()}`, {
+      type: 'basic',
+      iconUrl: 'icons/icon48.png',
       title: '🍅 Pomodoro Complete!',
-      message: `Session #${sessionCount} done. Take a ${breakDuration}-minute break!`
+      message: `Session #${sessionCount} done. Take a ${breakDuration}-minute break — you've earned it!`
     });
 
   } else if (session.pomodoroPhase === 'break') {
+    // Break ended → start next work phase
     const workEndTime = Date.now() + workDuration * 60 * 1000;
 
     await chrome.storage.session.set({
       pomodoroPhase: 'work',
       pomodoroEndTime: workEndTime
     });
+
     await chrome.alarms.create('pomodoro_phase_end', { when: workEndTime });
 
-    chrome.notifications.create(`pomo_${Date.now()}`, {
-      type: 'basic', iconUrl: 'icons/icon48.png',
+    chrome.notifications.create(`pomodoro_${Date.now()}`, {
+      type: 'basic',
+      iconUrl: 'icons/icon48.png',
       title: '⏰ Break Over!',
-      message: `Time to focus! Starting your next ${workDuration}-minute session.`
+      message: `Time to focus! Starting your next ${workDuration}-minute work session.`
     });
   }
 
@@ -253,18 +242,20 @@ async function handlePomodoroAlarm() {
 // ─────────────────────────────────────────────────────────────
 
 async function hashPassword(password) {
-  const encoder   = new TextEncoder();
-  const data      = encoder.encode(password);
+  const encoder = new TextEncoder();
+  const data = encoder.encode(password);
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
 async function verifyPassword(password) {
+  // Lockout check
   const session = await getSession(['lockoutUntil', 'failedAttempts']);
 
   if (session.lockoutUntil && Date.now() < session.lockoutUntil) {
-    const remainingMinutes = Math.ceil((session.lockoutUntil - Date.now()) / 60000);
+    const remainingMs = session.lockoutUntil - Date.now();
+    const remainingMinutes = Math.ceil(remainingMs / 60000);
     return { success: false, locked: true, remainingMinutes };
   }
 
@@ -272,11 +263,17 @@ async function verifyPassword(password) {
   const hash = await hashPassword(password);
 
   if (hash === passwordHash) {
-    await chrome.storage.session.set({ sessionUnlocked: true, failedAttempts: 0, lockoutUntil: null });
+    await chrome.storage.session.set({
+      sessionUnlocked: true,
+      failedAttempts: 0,
+      lockoutUntil: null
+    });
     return { success: true };
   }
 
+  // Wrong password
   const attempts = (session.failedAttempts || 0) + 1;
+
   if (attempts >= 5) {
     const lockoutUntil = Date.now() + 10 * 60 * 1000;
     await chrome.storage.session.set({ failedAttempts: attempts, lockoutUntil });
@@ -293,6 +290,27 @@ async function isSessionUnlocked() {
 }
 
 // ─────────────────────────────────────────────────────────────
+// BLOCKLIST HELPERS
+// ─────────────────────────────────────────────────────────────
+
+async function addSiteToBlocklist(domain) {
+  const { blocklist = [] } = await getLocal('blocklist');
+  if (blocklist.includes(domain)) return blocklist;
+  const newBlocklist = [...blocklist, domain];
+  await chrome.storage.local.set({ blocklist: newBlocklist });
+  await updateBlockingRules();
+  return newBlocklist;
+}
+
+async function removeSiteFromBlocklist(domain) {
+  const { blocklist = [] } = await getLocal('blocklist');
+  const newBlocklist = blocklist.filter(d => d !== domain);
+  await chrome.storage.local.set({ blocklist: newBlocklist });
+  await updateBlockingRules();
+  return newBlocklist;
+}
+
+// ─────────────────────────────────────────────────────────────
 // CONTEXT MENU
 // ─────────────────────────────────────────────────────────────
 
@@ -302,7 +320,8 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   const url = tab && tab.url;
   if (!url || url.startsWith('chrome://') || url.startsWith('chrome-extension://')) {
     chrome.notifications.create(`ctx_${Date.now()}`, {
-      type: 'basic', iconUrl: 'icons/icon48.png',
+      type: 'basic',
+      iconUrl: 'icons/icon48.png',
       title: 'Website Blocker',
       message: 'Cannot block Chrome internal pages.'
     });
@@ -310,63 +329,64 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   }
 
   let domain;
-  try { domain = new URL(url).hostname.replace(/^www\./, ''); } catch { return; }
+  try {
+    domain = new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return;
+  }
 
-  if (!await isSessionUnlocked()) {
+  const unlocked = await isSessionUnlocked();
+
+  if (!unlocked) {
+    // Store the pending domain so the popup can pick it up
     await chrome.storage.session.set({ pendingContextMenuDomain: domain });
     chrome.notifications.create(`ctx_lock_${Date.now()}`, {
-      type: 'basic', iconUrl: 'icons/icon48.png',
+      type: 'basic',
+      iconUrl: 'icons/icon48.png',
       title: 'Website Blocker — Locked',
       message: `Open the extension popup and unlock to block ${domain}.`
     });
     return;
   }
 
-  await addDomainToDefaultList(domain);
+  await addSiteToBlocklist(domain);
+
   chrome.notifications.create(`ctx_ok_${Date.now()}`, {
-    type: 'basic', iconUrl: 'icons/icon48.png',
+    type: 'basic',
+    iconUrl: 'icons/icon48.png',
     title: 'Website Blocked',
-    message: `${domain} has been added to your Default list.`
+    message: `${domain} has been added to your blocklist.`
   });
 });
-
-// Adds a domain to the Default list (used by context menu)
-async function addDomainToDefaultList(domain) {
-  const blockLists = await getBlockLists();
-  const updated = blockLists.map(l => {
-    if (l.id !== 'default') return l;
-    if (l.domains.includes(domain)) return l;
-    return { ...l, domains: [...l.domains, domain] };
-  });
-  await chrome.storage.local.set({ blockLists: updated });
-  await updateBlockingRules();
-  return updated;
-}
 
 // ─────────────────────────────────────────────────────────────
 // ALARMS
 // ─────────────────────────────────────────────────────────────
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
-  if (alarm.name === 'pomodoro_phase_end') await handlePomodoroAlarm();
-  else if (alarm.name === 'schedule_check') await updateBlockingRules();
+  if (alarm.name === 'pomodoro_phase_end') {
+    await handlePomodoroAlarm();
+  } else if (alarm.name === 'schedule_check') {
+    // Re-evaluate schedule blocking every minute
+    await updateBlockingRules();
+  }
 });
 
 // ─────────────────────────────────────────────────────────────
-// MESSAGE HANDLER
+// MESSAGE HANDLER  (popup ↔ background)
 // ─────────────────────────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   handleMessage(message)
     .then(sendResponse)
     .catch(err => sendResponse({ error: err.message }));
-  return true;
+  return true; // keep channel open for async response
 });
 
 async function handleMessage(message) {
   switch (message.type) {
 
-    // ── Full state snapshot ───────────────────────────────────
+    // ── State snapshot ───────────────────────────────────────
     case 'GET_STATE': {
       const session = await getSession([
         'pomodoroRunning', 'pomodoroPhase', 'pomodoroEndTime',
@@ -374,34 +394,38 @@ async function handleMessage(message) {
         'failedAttempts', 'pendingContextMenuDomain'
       ]);
       const local = await getLocal([
-        'schedule', 'pomodoroSettings', 'passwordHash',
-        'customQuotes', 'alwaysBlock', 'requirePasswordToDisable'
+        'blocklist', 'schedule', 'pomodoroSettings',
+        'passwordHash', 'customQuotes', 'alwaysBlock'
       ]);
-      const blockLists = await getBlockLists();
 
       return {
         pomodoro: {
-          running:  !!session.pomodoroRunning,
-          phase:    session.pomodoroPhase || 'idle',
-          endTime:  session.pomodoroEndTime  || null,
+          running: !!session.pomodoroRunning,
+          phase: session.pomodoroPhase || 'idle',
+          endTime: session.pomodoroEndTime || null,
           sessionCount: session.pomodoroSessionCount || 0,
-          settings: local.pomodoroSettings  || { workDuration: 25, breakDuration: 5 }
+          settings: local.pomodoroSettings || { workDuration: 25, breakDuration: 5 }
         },
-        blockLists,
-        schedule: local.schedule || { enabled: false, startTime: '09:00', endTime: '17:00', days: [1,2,3,4,5] },
+        blocklist: local.blocklist || [],
+        schedule: local.schedule || {
+          enabled: false,
+          startTime: '09:00',
+          endTime: '17:00',
+          days: [1, 2, 3, 4, 5]
+        },
         customQuotes: local.customQuotes || [],
-        hasPassword:  !!local.passwordHash,
+        hasPassword: !!local.passwordHash,
         sessionUnlocked: !!session.sessionUnlocked,
-        lockoutUntil:    session.lockoutUntil   || null,
-        failedAttempts:  session.failedAttempts || 0,
+        lockoutUntil: session.lockoutUntil || null,
+        failedAttempts: session.failedAttempts || 0,
         pendingContextMenuDomain: session.pendingContextMenuDomain || null,
-        alwaysBlock: local.alwaysBlock !== false,            // default true
-        requirePasswordToDisable: local.requirePasswordToDisable !== false, // default true
+        // alwaysBlock defaults to true when not explicitly set
+        alwaysBlock: local.alwaysBlock !== false,
         blockingActive: await isBlockingActive()
       };
     }
 
-    // ── Password setup (first run) ────────────────────────────
+    // ── Password setup (first run) ───────────────────────────
     case 'SETUP_PASSWORD': {
       const hash = await hashPassword(message.password);
       await chrome.storage.local.set({ passwordHash: hash });
@@ -409,34 +433,18 @@ async function handleMessage(message) {
       return { success: true };
     }
 
-    // ── Verify password / unlock ──────────────────────────────
+    // ── Verify / unlock ─────────────────────────────────────
     case 'VERIFY_PASSWORD': {
       return await verifyPassword(message.password);
     }
 
-    // ── Manual lock ───────────────────────────────────────────
+    // ── Manual lock ──────────────────────────────────────────
     case 'LOCK_SESSION': {
       await chrome.storage.session.set({ sessionUnlocked: false });
       return { success: true };
     }
 
-    // ── Always-block toggle ───────────────────────────────────
-    case 'SET_ALWAYS_BLOCK': {
-      if (!await isSessionUnlocked()) return { error: 'Session locked' };
-      await chrome.storage.local.set({ alwaysBlock: message.enabled });
-      await updateBlockingRules();
-      await updateBadge();
-      return { success: true };
-    }
-
-    // ── Require-password-to-disable setting ───────────────────
-    case 'SET_REQUIRE_PASSWORD_TO_DISABLE': {
-      if (!await isSessionUnlocked()) return { error: 'Session locked' };
-      await chrome.storage.local.set({ requirePasswordToDisable: message.enabled });
-      return { success: true };
-    }
-
-    // ── Pomodoro ──────────────────────────────────────────────
+    // ── Pomodoro ─────────────────────────────────────────────
     case 'START_POMODORO': {
       if (!await isSessionUnlocked()) return { error: 'Session locked' };
       await startPomodoro();
@@ -455,7 +463,20 @@ async function handleMessage(message) {
       return { success: true };
     }
 
-    // ── Schedule ──────────────────────────────────────────────
+    // ── Blocklist ────────────────────────────────────────────
+    case 'ADD_SITE': {
+      if (!await isSessionUnlocked()) return { error: 'Session locked' };
+      const blocklist = await addSiteToBlocklist(message.domain);
+      return { success: true, blocklist };
+    }
+
+    case 'REMOVE_SITE': {
+      if (!await isSessionUnlocked()) return { error: 'Session locked' };
+      const blocklist = await removeSiteFromBlocklist(message.domain);
+      return { success: true, blocklist };
+    }
+
+    // ── Schedule ─────────────────────────────────────────────
     case 'UPDATE_SCHEDULE': {
       if (!await isSessionUnlocked()) return { error: 'Session locked' };
       await chrome.storage.local.set({ schedule: message.schedule });
@@ -463,72 +484,7 @@ async function handleMessage(message) {
       return { success: true };
     }
 
-    // ── Block Lists ───────────────────────────────────────────
-    case 'CREATE_LIST': {
-      if (!await isSessionUnlocked()) return { error: 'Session locked' };
-      const blockLists = await getBlockLists();
-      const newList = { id: `list_${Date.now()}`, name: message.name, enabled: true, domains: [] };
-      const updated = [...blockLists, newList];
-      await chrome.storage.local.set({ blockLists: updated });
-      await updateBlockingRules();
-      return { success: true, blockLists: updated };
-    }
-
-    case 'DELETE_LIST': {
-      if (!await isSessionUnlocked()) return { error: 'Session locked' };
-      if (message.id === 'default') return { error: 'Cannot delete the Default list.' };
-      const blockLists = await getBlockLists();
-      const updated = blockLists.filter(l => l.id !== message.id);
-      await chrome.storage.local.set({ blockLists: updated });
-      await updateBlockingRules();
-      return { success: true, blockLists: updated };
-    }
-
-    case 'RENAME_LIST': {
-      if (!await isSessionUnlocked()) return { error: 'Session locked' };
-      const blockLists = await getBlockLists();
-      const updated = blockLists.map(l => l.id === message.id ? { ...l, name: message.name } : l);
-      await chrome.storage.local.set({ blockLists: updated });
-      return { success: true, blockLists: updated };
-    }
-
-    case 'TOGGLE_LIST': {
-      if (!await isSessionUnlocked()) return { error: 'Session locked' };
-      const blockLists = await getBlockLists();
-      const updated = blockLists.map(l =>
-        l.id === message.id ? { ...l, enabled: message.enabled } : l
-      );
-      await chrome.storage.local.set({ blockLists: updated });
-      await updateBlockingRules();
-      return { success: true, blockLists: updated };
-    }
-
-    case 'ADD_SITE_TO_LIST': {
-      if (!await isSessionUnlocked()) return { error: 'Session locked' };
-      const blockLists = await getBlockLists();
-      const updated = blockLists.map(l => {
-        if (l.id !== message.listId) return l;
-        if ((l.domains || []).includes(message.domain)) return l;
-        return { ...l, domains: [...(l.domains || []), message.domain] };
-      });
-      await chrome.storage.local.set({ blockLists: updated });
-      await updateBlockingRules();
-      return { success: true, blockLists: updated };
-    }
-
-    case 'REMOVE_SITE_FROM_LIST': {
-      if (!await isSessionUnlocked()) return { error: 'Session locked' };
-      const blockLists = await getBlockLists();
-      const updated = blockLists.map(l => {
-        if (l.id !== message.listId) return l;
-        return { ...l, domains: (l.domains || []).filter(d => d !== message.domain) };
-      });
-      await chrome.storage.local.set({ blockLists: updated });
-      await updateBlockingRules();
-      return { success: true, blockLists: updated };
-    }
-
-    // ── Custom quotes ─────────────────────────────────────────
+    // ── Custom quotes ────────────────────────────────────────
     case 'ADD_CUSTOM_QUOTE': {
       if (!await isSessionUnlocked()) return { error: 'Session locked' };
       const { customQuotes = [] } = await getLocal('customQuotes');
@@ -545,12 +501,24 @@ async function handleMessage(message) {
       return { success: true, customQuotes: updated };
     }
 
-    // ── Password change ───────────────────────────────────────
+    // ── Always-block toggle ──────────────────────────────────
+    case 'SET_ALWAYS_BLOCK': {
+      if (!await isSessionUnlocked()) return { error: 'Session locked' };
+      await chrome.storage.local.set({ alwaysBlock: message.enabled });
+      await updateBlockingRules();
+      await updateBadge();
+      return { success: true };
+    }
+
+    // ── Password change (requires current password) ──────────
     case 'CHANGE_PASSWORD': {
       if (!await isSessionUnlocked()) return { error: 'Session locked' };
+      // Verify the current password before allowing the change
       const verify = await verifyPassword(message.currentPassword);
       if (!verify.success) {
-        if (verify.locked) return { error: `Too many attempts. Try again in ${verify.remainingMinutes} minute(s).` };
+        if (verify.locked) {
+          return { error: `Too many attempts. Try again in ${verify.remainingMinutes} minute(s).` };
+        }
         return { error: `Current password is incorrect. ${verify.attemptsRemaining} attempt(s) remaining.` };
       }
       const hash = await hashPassword(message.newPassword);
@@ -558,27 +526,30 @@ async function handleMessage(message) {
       return { success: true };
     }
 
-    // ── Context menu helpers ──────────────────────────────────
+    // ── Context menu: clear pending domain ───────────────────
     case 'CLEAR_PENDING_CONTEXT_MENU': {
       await chrome.storage.session.remove('pendingContextMenuDomain');
       return { success: true };
     }
 
+    // ── Add pending context menu domain ──────────────────────
     case 'ADD_PENDING_CONTEXT_MENU_SITE': {
       if (!await isSessionUnlocked()) return { error: 'Session locked' };
       const { pendingContextMenuDomain } = await getSession('pendingContextMenuDomain');
       if (!pendingContextMenuDomain) return { success: false };
-      const blockLists = await addDomainToDefaultList(pendingContextMenuDomain);
+      const blocklist = await addSiteToBlocklist(pendingContextMenuDomain);
       await chrome.storage.session.remove('pendingContextMenuDomain');
+
       chrome.notifications.create(`ctx_ok_${Date.now()}`, {
-        type: 'basic', iconUrl: 'icons/icon48.png',
+        type: 'basic',
+        iconUrl: 'icons/icon48.png',
         title: 'Website Blocked',
-        message: `${pendingContextMenuDomain} added to your Default list.`
+        message: `${pendingContextMenuDomain} has been added to your blocklist.`
       });
-      return { success: true, blockLists };
+      return { success: true, blocklist };
     }
 
-    // ── Full reset ────────────────────────────────────────────
+    // ── Full reset ───────────────────────────────────────────
     case 'RESET_ALL': {
       await chrome.storage.local.clear();
       await chrome.storage.session.clear();
@@ -586,7 +557,8 @@ async function handleMessage(message) {
       const existing = await chrome.declarativeNetRequest.getDynamicRules();
       if (existing.length > 0) {
         await chrome.declarativeNetRequest.updateDynamicRules({
-          removeRuleIds: existing.map(r => r.id), addRules: []
+          removeRuleIds: existing.map(r => r.id),
+          addRules: []
         });
       }
       await chrome.action.setBadgeText({ text: '' });
