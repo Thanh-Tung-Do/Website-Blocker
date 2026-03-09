@@ -29,10 +29,22 @@ async function initExtension() {
     chrome.alarms.create('schedule_check', { periodInMinutes: 1 });
   }
 
+  // Migrate single schedule → schedules array (one-time, idempotent)
+  await migrateSchedule();
   // Restore blocking rules based on current state
   // (when session is locked, rules left as-is from previous session — they persist natively)
   await updateBlockingRules();
   await updateBadge();
+}
+
+async function migrateSchedule() {
+  const { schedule, schedules } = await getLocal(['schedule', 'schedules']);
+  if (schedules !== undefined) return; // already migrated
+  const migrated = schedule
+    ? [{ ...schedule, id: Date.now(), name: 'My Schedule' }]
+    : [];
+  await chrome.storage.local.set({ schedules: migrated });
+  if (schedule) await chrome.storage.local.remove('schedule');
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -161,26 +173,26 @@ async function isBlockingActive() {
 }
 
 async function isScheduleActive() {
-  const { schedule } = await getLocal('schedule');
-  if (!schedule || !schedule.enabled) return false;
+  const { schedules = [] } = await getLocal('schedules');
+  if (schedules.length === 0) return false;
 
   const now = new Date();
-  const day = now.getDay(); // 0=Sun … 6=Sat
-
-  if (!schedule.days || !schedule.days.includes(day)) return false;
-
+  const day = now.getDay();
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
-  const [startH, startM] = schedule.startTime.split(':').map(Number);
-  const [endH, endM] = schedule.endTime.split(':').map(Number);
-  const startMinutes = startH * 60 + startM;
-  const endMinutes = endH * 60 + endM;
 
-  // Handle overnight schedules (e.g. 22:00 → 06:00)
-  if (startMinutes <= endMinutes) {
-    return currentMinutes >= startMinutes && currentMinutes < endMinutes;
-  } else {
-    return currentMinutes >= startMinutes || currentMinutes < endMinutes;
-  }
+  return schedules.some(schedule => {
+    if (!schedule.enabled) return false;
+    if (!schedule.days || !schedule.days.includes(day)) return false;
+    const [startH, startM] = schedule.startTime.split(':').map(Number);
+    const [endH, endM]     = schedule.endTime.split(':').map(Number);
+    const startMinutes = startH * 60 + startM;
+    const endMinutes   = endH * 60 + endM;
+    if (startMinutes <= endMinutes) {
+      return currentMinutes >= startMinutes && currentMinutes < endMinutes;
+    } else {
+      return currentMinutes >= startMinutes || currentMinutes < endMinutes;
+    }
+  });
 }
 
 async function updateBlockingRules() {
@@ -546,7 +558,7 @@ async function handleMessage(message) {
         'failedAttempts', 'pendingContextMenuDomain'
       ]);
       const local = await getLocal([
-        'schedule', 'pomodoroSettings',
+        'schedules', 'pomodoroSettings',
         'passwordHash', 'customQuotes', 'alwaysBlock'
       ]);
 
@@ -562,12 +574,7 @@ async function handleMessage(message) {
           settings: local.pomodoroSettings || { workDuration: 25, breakDuration: 5 }
         },
         blocklist,
-        schedule: local.schedule || {
-          enabled: false,
-          startTime: '09:00',
-          endTime: '17:00',
-          days: [1, 2, 3, 4, 5]
-        },
+        schedules: local.schedules || [],
         customQuotes: local.customQuotes || [],
         hasPassword: !!local.passwordHash,
         sessionUnlocked: !!session.sessionUnlocked,
@@ -642,10 +649,22 @@ async function handleMessage(message) {
       return { success: true, blocklist };
     }
 
-    // ── Schedule ─────────────────────────────────────────────
-    case 'UPDATE_SCHEDULE': {
+    // ── Batch import ─────────────────────────────────────────
+    case 'IMPORT_SITES': {
       if (!await isSessionUnlocked()) return { error: 'Session locked' };
-      await chrome.storage.local.set({ schedule: message.schedule });
+      const existing = (await getDecryptedBlocklist()) || [];
+      const incoming = (message.domains || []).filter(d => d && d.includes('.'));
+      const merged   = [...new Set([...existing, ...incoming])];
+      const { sessionEncKey } = await getSession('sessionEncKey');
+      const key = await hexToKey(sessionEncKey);
+      await saveBlocklist(merged, key);
+      return { success: true, blocklist: merged, added: merged.length - existing.length };
+    }
+
+    // ── Schedules ────────────────────────────────────────────
+    case 'UPDATE_SCHEDULES': {
+      if (!await isSessionUnlocked()) return { error: 'Session locked' };
+      await chrome.storage.local.set({ schedules: message.schedules });
       await updateBlockingRules();
       return { success: true };
     }

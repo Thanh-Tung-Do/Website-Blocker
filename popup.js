@@ -20,6 +20,7 @@ function send(msg) {
 let state = null;
 let countdownInterval = null;
 let selectedDays = new Set([1, 2, 3, 4, 5]);
+let editingScheduleId = null; // null = adding new
 
 // Per-popup: whether the blocklist has been revealed this session
 let sitesRevealed = false;
@@ -170,6 +171,12 @@ function setupSitesTab() {
   document.getElementById('site-input').addEventListener('keydown', e => {
     if (e.key === 'Enter') addSite();
   });
+  document.getElementById('btn-export-sites').addEventListener('click', exportBlocklist);
+  document.getElementById('btn-import-sites').addEventListener('click', () => {
+    document.getElementById('import-textarea').value = '';
+    document.getElementById('import-error').classList.remove('visible');
+    showModal('import');
+  });
 
   document.getElementById('btn-reveal-sites').addEventListener('click', () => {
     confirmWithPassword(
@@ -257,6 +264,57 @@ async function removeSite(domain) {
   renderSitesList();
 }
 
+function exportBlocklist() {
+  if (!state.sessionUnlocked) { showModal('unlock'); return; }
+  const sites = state.blocklist || [];
+  if (sites.length === 0) { alert('Your blocklist is empty.'); return; }
+  const blob = new Blob([sites.join('\n')], { type: 'text/plain' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = 'blocklist.txt';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+async function importBlocklist() {
+  if (!state.sessionUnlocked) { showModal('unlock'); return; }
+
+  const text    = document.getElementById('import-textarea').value;
+  const err     = document.getElementById('import-error');
+  err.classList.remove('visible');
+
+  const domains = text.split(/\r?\n/)
+    .map(l => {
+      let d = l.trim().toLowerCase();
+      if (!d || d.startsWith('#')) return '';
+      try { if (d.includes('://')) d = new URL(d).hostname; } catch { return ''; }
+      d = d.replace(/^www\./, '').split('/')[0];
+      return (d.includes('.') && !d.includes(' ') && d.length <= 253) ? d : '';
+    })
+    .filter(Boolean);
+
+  if (domains.length === 0) {
+    showError(err, 'No valid domains found. Enter one domain per line.');
+    return;
+  }
+
+  const result = await send({ type: 'IMPORT_SITES', domains });
+  if (result.error) { showError(err, result.error); return; }
+
+  state.blocklist = result.blocklist;
+  document.getElementById('import-textarea').value = '';
+  hideModal();
+  renderSitesList();
+
+  const btn  = document.getElementById('btn-import-sites');
+  const orig = btn.textContent;
+  btn.textContent = result.added > 0 ? `${result.added} imported` : 'No new sites';
+  setTimeout(() => { btn.textContent = orig; }, 2500);
+}
+
 function showInlineError(inputId, msg) {
   const input = document.getElementById(inputId);
   input.style.borderColor = 'var(--danger)';
@@ -265,7 +323,7 @@ function showInlineError(inputId, msg) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// SCHEDULE TAB  — every save requires password re-entry
+// SCHEDULE TAB  — every save/delete requires password re-entry
 // ─────────────────────────────────────────────────────────────
 
 function setupScheduleTab() {
@@ -276,43 +334,122 @@ function setupScheduleTab() {
       else                        { selectedDays.add(day);    btn.classList.add('selected'); }
     });
   });
-
   document.getElementById('btn-save-schedule').addEventListener('click', saveSchedule);
+  document.getElementById('btn-cancel-schedule').addEventListener('click', resetScheduleForm);
 }
 
-function renderScheduleTab() {
-  const sched = state.schedule || {};
-  document.getElementById('schedule-enabled').checked    = !!sched.enabled;
-  document.getElementById('schedule-start').value        = sched.startTime || '09:00';
-  document.getElementById('schedule-end').value          = sched.endTime   || '17:00';
-
-  selectedDays = new Set(sched.days || [1, 2, 3, 4, 5]);
+function resetScheduleForm() {
+  editingScheduleId = null;
+  document.getElementById('sched-form-title').textContent = 'Add Schedule';
+  document.getElementById('schedule-name').value          = '';
+  document.getElementById('schedule-enabled').checked     = true;
+  document.getElementById('schedule-start').value         = '09:00';
+  document.getElementById('schedule-end').value           = '17:00';
+  selectedDays = new Set([1, 2, 3, 4, 5]);
   document.querySelectorAll('.day-btn').forEach(btn => {
     btn.classList.toggle('selected', selectedDays.has(parseInt(btn.dataset.day)));
   });
+  document.getElementById('btn-cancel-schedule').style.display = 'none';
+}
+
+function renderScheduleTab() {
+  const schedules = state.schedules || [];
+  const list  = document.getElementById('schedule-list');
+  const empty = document.getElementById('schedule-empty');
+  list.innerHTML = '';
+
+  const DAY_ABBR = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+
+  if (schedules.length === 0) {
+    empty.style.display = 'block';
+  } else {
+    empty.style.display = 'none';
+    schedules.forEach(sched => {
+      const dayStr  = (sched.days || []).sort((a, b) => a - b).map(d => DAY_ABBR[d]).join(' ');
+      const card    = document.createElement('div');
+      card.className = 'sched-card';
+      card.innerHTML = `
+        <div class="sched-card-dot ${sched.enabled ? 'on' : 'off'}"></div>
+        <div class="sched-card-info">
+          <div class="sched-card-name">${escapeHtml(sched.name || 'Schedule')}</div>
+          <div class="sched-card-sub">${escapeHtml(sched.startTime)} – ${escapeHtml(sched.endTime)} · ${escapeHtml(dayStr || 'No days')}</div>
+        </div>
+        <div class="sched-card-btns">
+          <button class="edit" title="Edit">✏</button>
+          <button class="del"  title="Delete">✕</button>
+        </div>
+      `;
+      card.querySelector('.edit').addEventListener('click', () => startEditSchedule(sched));
+      card.querySelector('.del').addEventListener('click',  () => deleteSchedule(sched.id));
+      list.appendChild(card);
+    });
+  }
+
+  if (!editingScheduleId) resetScheduleForm();
+}
+
+function startEditSchedule(sched) {
+  editingScheduleId = sched.id;
+  document.getElementById('sched-form-title').textContent    = 'Edit Schedule';
+  document.getElementById('schedule-name').value             = sched.name || '';
+  document.getElementById('schedule-enabled').checked        = !!sched.enabled;
+  document.getElementById('schedule-start').value            = sched.startTime || '09:00';
+  document.getElementById('schedule-end').value              = sched.endTime   || '17:00';
+  selectedDays = new Set(sched.days || []);
+  document.querySelectorAll('.day-btn').forEach(btn => {
+    btn.classList.toggle('selected', selectedDays.has(parseInt(btn.dataset.day)));
+  });
+  document.getElementById('btn-cancel-schedule').style.display = 'inline-flex';
+  document.getElementById('schedule-form').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 function saveSchedule() {
   if (!state.sessionUnlocked) { showModal('unlock'); return; }
 
-  // Capture the current form values NOW (before the modal opens)
-  const schedule = {
+  // Capture form values before the modal opens
+  const entry = {
+    id:        editingScheduleId || Date.now(),
+    name:      document.getElementById('schedule-name').value.trim() || 'Schedule',
     enabled:   document.getElementById('schedule-enabled').checked,
     startTime: document.getElementById('schedule-start').value,
     endTime:   document.getElementById('schedule-end').value,
     days:      [...selectedDays]
   };
 
+  const existing     = state.schedules || [];
+  const newSchedules = editingScheduleId
+    ? existing.map(s => s.id === editingScheduleId ? entry : s)
+    : [...existing, entry];
+
   confirmWithPassword(
     '🔒 Save Schedule',
     'Enter your master password to save changes to the blocking schedule.',
     async () => {
-      const result = await send({ type: 'UPDATE_SCHEDULE', schedule });
+      const result = await send({ type: 'UPDATE_SCHEDULES', schedules: newSchedules });
       if (result.error) { alert(result.error); return; }
-      state.schedule = schedule;
+      state.schedules = newSchedules;
+      resetScheduleForm();
+      renderScheduleTab();
       flashButton('btn-save-schedule', 'Saved!');
     },
     'Save'
+  );
+}
+
+function deleteSchedule(id) {
+  if (!state.sessionUnlocked) { showModal('unlock'); return; }
+  const newSchedules = (state.schedules || []).filter(s => s.id !== id);
+  confirmWithPassword(
+    '🔒 Delete Schedule',
+    'Enter your master password to delete this schedule.',
+    async () => {
+      const result = await send({ type: 'UPDATE_SCHEDULES', schedules: newSchedules });
+      if (result.error) { alert(result.error); return; }
+      state.schedules = newSchedules;
+      if (editingScheduleId === id) resetScheduleForm();
+      renderScheduleTab();
+    },
+    'Delete'
   );
 }
 
@@ -652,6 +789,14 @@ function setupModalButtons() {
     document.getElementById('reveal-pw').value = '';
     hideModal();
   });
+
+  // ── Import domains ───────────────────────────────────────────
+  document.getElementById('btn-import-cancel').addEventListener('click', () => {
+    document.getElementById('import-textarea').value = '';
+    document.getElementById('import-error').classList.remove('visible');
+    hideModal();
+  });
+  document.getElementById('btn-import-submit').addEventListener('click', importBlocklist);
 
   // ── Context menu pending ─────────────────────────────────────
   document.getElementById('btn-ctx-cancel').addEventListener('click', async () => {

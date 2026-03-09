@@ -327,6 +327,39 @@
       border-radius: 4px;
     }
     .btn-link:hover { color: var(--text); text-decoration: underline; }
+
+    /* ── Schedule cards ── */
+    .sched-card {
+      background: var(--surface2); border-radius: var(--radius);
+      padding: 9px 10px; display: flex; align-items: center; gap: 8px;
+    }
+    .sched-card-dot  { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .sched-card-dot.on  { background: var(--success); }
+    .sched-card-dot.off { background: var(--border); }
+    .sched-card-info { flex: 1; overflow: hidden; }
+    .sched-card-name { font-weight: 600; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .sched-card-sub  { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+    .sched-card-btns { display: flex; gap: 2px; flex-shrink: 0; }
+    .sched-card-btns button {
+      background: none; border: none; cursor: pointer; color: var(--text-muted);
+      font-size: 13px; padding: 3px 6px; border-radius: 4px;
+      transition: background 0.15s, color 0.15s;
+    }
+    .sched-card-btns button:hover { background: var(--border); color: var(--text); }
+    .sched-card-btns .del:hover   { color: var(--danger); background: rgba(239,68,68,0.1); }
+
+    /* ── Schedule form ── */
+    #schedule-form { display: flex; flex-direction: column; gap: 10px; }
+
+    /* ── Import textarea ── */
+    #import-textarea {
+      width: 100%; background: var(--surface2); border: 1px solid var(--border);
+      border-radius: var(--radius); color: var(--text); padding: 8px 10px;
+      font-size: 12px; font-family: monospace; outline: none; resize: vertical;
+      min-height: 90px; transition: border-color 0.15s;
+    }
+    #import-textarea:focus { border-color: var(--accent); }
+    #import-textarea::placeholder { color: var(--text-muted); }
   </style>
 </head>
 <body>
@@ -367,6 +400,11 @@
       <button class="btn btn-primary" id="btn-add-site" style="margin-bottom:0">Add</button>
     </div>
 
+    <div class="row" style="justify-content:flex-end; gap:6px;">
+      <button class="btn btn-ghost" id="btn-export-sites" style="font-size:11px; padding:5px 10px">⬇ Export</button>
+      <button class="btn btn-ghost" id="btn-import-sites" style="font-size:11px; padding:5px 10px">⬆ Import</button>
+    </div>
+
     <!-- Hidden state (default) -->
     <div id="sites-hidden-state">
       <div class="sites-hidden">
@@ -391,44 +429,61 @@
 
   <!-- ─── SCHEDULE TAB ─── -->
   <div class="tab-panel" id="tab-schedule">
-    <div class="toggle-row">
-      <span style="font-weight:600">Enable Schedule</span>
-      <label class="toggle">
-        <input type="checkbox" id="schedule-enabled" />
-        <span class="toggle-slider"></span>
-      </label>
+
+    <!-- Existing schedules -->
+    <div id="schedule-list" style="display:flex; flex-direction:column; gap:4px;"></div>
+    <div class="empty-msg" id="schedule-empty" style="display:none">
+      No schedules yet. Create one below.
     </div>
 
-    <div class="time-row">
-      <div>
-        <label for="schedule-start">Start time</label>
-        <input type="time" id="schedule-start" value="09:00" />
-      </div>
-      <div>
-        <label for="schedule-end">End time</label>
-        <input type="time" id="schedule-end" value="17:00" />
-      </div>
-    </div>
+    <div class="divider"></div>
 
-    <div>
-      <label>Active days</label>
-      <div class="days-grid" id="days-grid">
-        <button class="day-btn" data-day="0">Sun</button>
-        <button class="day-btn selected" data-day="1">Mon</button>
-        <button class="day-btn selected" data-day="2">Tue</button>
-        <button class="day-btn selected" data-day="3">Wed</button>
-        <button class="day-btn selected" data-day="4">Thu</button>
-        <button class="day-btn selected" data-day="5">Fri</button>
-        <button class="day-btn" data-day="6">Sat</button>
+    <!-- Add / Edit form -->
+    <div id="schedule-form">
+      <p id="sched-form-title" style="font-size:12px; font-weight:600; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em;">Add Schedule</p>
+      <div>
+        <label for="schedule-name">Name</label>
+        <input type="text" id="schedule-name" placeholder="e.g. Work Hours" autocomplete="off" />
+      </div>
+      <div class="toggle-row">
+        <span style="font-weight:600">Enabled</span>
+        <label class="toggle">
+          <input type="checkbox" id="schedule-enabled" checked />
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="time-row">
+        <div>
+          <label for="schedule-start">Start time</label>
+          <input type="time" id="schedule-start" value="09:00" />
+        </div>
+        <div>
+          <label for="schedule-end">End time</label>
+          <input type="time" id="schedule-end" value="17:00" />
+        </div>
+      </div>
+      <div>
+        <label>Active days</label>
+        <div class="days-grid" id="days-grid">
+          <button class="day-btn" data-day="0">Sun</button>
+          <button class="day-btn selected" data-day="1">Mon</button>
+          <button class="day-btn selected" data-day="2">Tue</button>
+          <button class="day-btn selected" data-day="3">Wed</button>
+          <button class="day-btn selected" data-day="4">Thu</button>
+          <button class="day-btn selected" data-day="5">Fri</button>
+          <button class="day-btn" data-day="6">Sat</button>
+        </div>
+      </div>
+      <div class="row">
+        <button class="btn btn-primary" id="btn-save-schedule" style="flex:1">Save Schedule</button>
+        <button class="btn btn-ghost" id="btn-cancel-schedule" style="display:none">Cancel</button>
       </div>
     </div>
 
     <p style="font-size:11px; color:var(--text-muted); line-height:1.5">
-      Blocking is active during the time window on selected days.
-      If a Pomodoro session is running, it overrides the schedule.
+      Blocking activates if any enabled schedule is currently active.
+      Pomodoro sessions override all schedules.
     </p>
-
-    <button class="btn btn-primary btn-full" id="btn-save-schedule">Save Schedule</button>
   </div>
 
   <!-- ─── POMODORO TAB ─── -->
@@ -567,6 +622,18 @@
       <div class="modal-btns">
         <button class="btn btn-ghost" id="btn-reveal-cancel">Cancel</button>
         <button class="btn btn-primary" id="btn-reveal-submit">Confirm</button>
+      </div>
+    </div>
+
+    <!-- Import domains modal -->
+    <div class="modal" id="modal-import" style="display:none">
+      <h2>Import Domains</h2>
+      <p>Paste your domains below — one per line. Lines starting with # are ignored. You can copy-paste directly from a .txt file.</p>
+      <textarea id="import-textarea" placeholder="reddit.com&#10;facebook.com&#10;example.com"></textarea>
+      <div class="error-msg" id="import-error"></div>
+      <div class="modal-btns">
+        <button class="btn btn-ghost" id="btn-import-cancel">Cancel</button>
+        <button class="btn btn-primary" id="btn-import-submit">Import</button>
       </div>
     </div>
 
