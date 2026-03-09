@@ -44,6 +44,54 @@
       width: 100%;
       text-align: center;
       box-shadow: 0 8px 40px rgba(0, 0, 0, 0.10), 0 2px 8px rgba(0,0,0,0.06);
+      position: relative;
+      transition: box-shadow 0.4s;
+    }
+
+    .card.hard-active {
+      box-shadow: 0 8px 40px rgba(220, 38, 38, 0.22), 0 2px 8px rgba(220,38,38,0.12),
+                  0 0 0 1px rgba(220, 38, 38, 0.18);
+    }
+
+    /* ── Hard Mode energy effect ── */
+
+    /* Full-screen pulsing vignette */
+    #hard-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      background: radial-gradient(
+        ellipse at center,
+        transparent 35%,
+        rgba(200, 10, 10, 0.18) 70%,
+        rgba(160, 0, 0, 0.38) 100%
+      );
+      animation: vignette-pulse 1.6s ease-in-out infinite alternate;
+    }
+
+    @keyframes vignette-pulse {
+      0%   { opacity: 0.55; }
+      100% { opacity: 1; }
+    }
+
+    /* Ember particles (spawned by JS) */
+    @keyframes ember-rise {
+      0%   { transform: translate(0, 0) scale(1); opacity: 0.9; }
+      60%  { opacity: 0.6; }
+      100% { transform: translate(var(--dx), var(--dy)) scale(0.1); opacity: 0; }
+    }
+
+    /* Card glow pulse */
+    .card.hard-active {
+      animation: card-burn 1.8s ease-in-out infinite alternate;
+      z-index: 1;
+    }
+
+    @keyframes card-burn {
+      0%   { box-shadow: 0 8px 40px rgba(0,0,0,0.10), 0 0  50px rgba(220,38,38,0.08); }
+      100% { box-shadow: 0 8px 80px rgba(220,38,38,0.45), 0 0 130px rgba(220,38,38,0.25); }
     }
 
     /* ── Shield icon ── */
@@ -239,6 +287,8 @@
     </div>
 
     <p class="footer">Website Blocker — stay focused, one session at a time.</p>
+
+    <div id="hard-overlay"></div>
   </div>
 
   <script src="quotes.js"></script>

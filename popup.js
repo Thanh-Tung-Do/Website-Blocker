@@ -586,8 +586,8 @@ function renderHardModeTab() {
   clearInterval(hardCountdownInterval);
 
   const hardActive = !!(state.hardModeUntil && Date.now() < state.hardModeUntil);
-  document.getElementById('hard-idle').style.display   = hardActive ? 'none'  : 'block';
-  document.getElementById('hard-active').style.display = hardActive ? 'block' : 'none';
+  document.getElementById('hard-idle').style.display   = hardActive ? 'none'  : 'flex';
+  document.getElementById('hard-active').style.display = hardActive ? 'flex'  : 'none';
 
   if (!hardActive) return;
 

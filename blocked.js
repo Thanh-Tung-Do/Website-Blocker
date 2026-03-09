@@ -44,6 +44,35 @@ function startHardCountdown(hardModeUntil) {
   const countdown = document.getElementById('hard-countdown');
   section.style.display = 'block';
 
+  // Energy effect: vignette + card glow + rising ember particles
+  document.getElementById('hard-overlay').style.display = 'block';
+  document.querySelector('.card').classList.add('hard-active');
+
+  const emberColors = ['#ff1a00', '#ff4500', '#ff6600', '#ff9900', '#ffcc00'];
+  function spawnEmber() {
+    const size   = 2 + Math.random() * 5;
+    const x      = Math.random() * window.innerWidth;
+    const dy     = -(120 + Math.random() * 340);
+    const dx     = (Math.random() - 0.5) * 120;
+    const dur    = 1.0 + Math.random() * 1.6;
+    const color  = emberColors[Math.floor(Math.random() * emberColors.length)];
+    const el     = document.createElement('div');
+    el.style.cssText = [
+      'position:fixed', `bottom:${Math.random() * 60}px`, `left:${x}px`,
+      `width:${size}px`, `height:${size}px`, 'border-radius:50%',
+      `background:${color}`, `box-shadow:0 0 ${size * 2.5}px ${color}`,
+      'pointer-events:none', 'z-index:2',
+      `--dx:${dx}px`, `--dy:${dy}px`,
+      `animation:ember-rise ${dur}s ease-out forwards`
+    ].join(';');
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), dur * 1000 + 100);
+  }
+
+  // Initial burst then steady stream
+  for (let i = 0; i < 12; i++) setTimeout(spawnEmber, i * 60);
+  setInterval(() => { for (let i = 0; i < 2; i++) spawnEmber(); }, 180);
+
   function tick() {
     const remaining = Math.max(0, hardModeUntil - Date.now());
     const totalSecs = Math.floor(remaining / 1000);
