@@ -23,7 +23,6 @@ let selectedDays = new Set([1, 2, 3, 4, 5]);
 
 // Sites tab
 let selectedListId = 'default';  // which list is being edited
-let sitesRevealed  = false;       // whether the selected list's domains are visible
 
 // Generic password-confirmation
 let pendingPasswordCallback = null;
@@ -59,6 +58,7 @@ function renderUI() {
   hideModal();
   renderHeader();
   renderBlockLists();
+  renderListEditSection();
   renderScheduleTab();
   renderPomodoroTab();
   renderSettingsTab();
@@ -170,19 +170,6 @@ function setupSitesTab() {
   });
 
   document.getElementById('btn-new-list').addEventListener('click', createNewList);
-
-  document.getElementById('btn-reveal-sites').addEventListener('click', () => {
-    confirmWithPassword(
-      '🔒 Reveal Blocked Sites',
-      'Enter your password to view the domains in this list.',
-      () => { sitesRevealed = true; renderSelectedListDomains(); }
-    );
-  });
-
-  document.getElementById('btn-hide-sites').addEventListener('click', () => {
-    sitesRevealed = false;
-    renderSelectedListDomains();
-  });
 }
 
 // Render the list-of-lists cards
@@ -276,7 +263,6 @@ function renderBlockLists() {
 
 // Switch which list is selected for editing
 function selectList(id) {
-  if (selectedListId !== id) sitesRevealed = false; // hide on list change
   selectedListId = id;
   renderBlockLists();
   renderListEditSection();
@@ -301,28 +287,14 @@ function renderListEditSection() {
   renderSelectedListDomains();
 }
 
-// Render the hidden/revealed domain list for the selected list
+// Render the domain list for the selected list
 function renderSelectedListDomains() {
-  const hiddenState   = document.getElementById('sites-hidden-state');
-  const listContainer = document.getElementById('site-list-container');
-  const countText     = document.getElementById('sites-count-text');
-  const siteList      = document.getElementById('site-list');
-  const emptyMsg      = document.getElementById('site-empty');
+  const siteList = document.getElementById('site-list');
+  const emptyMsg = document.getElementById('site-empty');
 
   const list    = (state.blockLists || []).find(l => l.id === selectedListId);
   const domains = list ? (list.domains || []) : [];
-  const n       = domains.length;
 
-  countText.textContent = n === 0 ? 'No sites yet' : `${n} site${n !== 1 ? 's' : ''}`;
-
-  if (!sitesRevealed) {
-    hiddenState.style.display   = 'block';
-    listContainer.style.display = 'none';
-    return;
-  }
-
-  hiddenState.style.display   = 'none';
-  listContainer.style.display = 'block';
   siteList.innerHTML = '';
 
   if (domains.length === 0) {
@@ -579,7 +551,6 @@ function setupSettingsTab() {
       'This permanently erases your blocklist, schedule, password, and all settings. Cannot be undone.',
       async () => {
         await send({ type: 'RESET_ALL' });
-        sitesRevealed = false;
         selectedListId = 'default';
         await refreshState();
         renderUI();
@@ -660,7 +631,6 @@ function setupLockButton() {
   document.getElementById('btn-lock').addEventListener('click', async () => {
     await send({ type: 'LOCK_SESSION' });
     state.sessionUnlocked = false;
-    sitesRevealed = false;
     pendingPasswordCallback = null;
     renderUI();
   });
@@ -740,7 +710,7 @@ function setupModalButtons() {
   document.getElementById('btn-forgot-cancel').addEventListener('click',  () => showModal('unlock'));
   document.getElementById('btn-forgot-confirm').addEventListener('click', async () => {
     await send({ type: 'RESET_ALL' });
-    sitesRevealed = false; selectedListId = 'default';
+    selectedListId = 'default';
     await refreshState();
     renderUI();
   });
