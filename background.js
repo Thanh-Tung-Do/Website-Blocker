@@ -280,6 +280,39 @@ async function saveBlocklist(blocklist, key) {
   await updateBlockingRules();
 }
 
+// Immediately redirects any open tabs that match the given domains to blocked.html.
+// declarativeNetRequest only intercepts new navigations, so already-loaded tabs
+// must be redirected explicitly when blocking activates.
+async function redirectBlockedTabs(domains) {
+  if (!domains || domains.length === 0) return;
+  const extId = chrome.runtime.id;
+  const blockedPrefix = `chrome-extension://${extId}/blocked.html`;
+
+  let tabs;
+  try { tabs = await chrome.tabs.query({}); } catch { return; }
+
+  for (const tab of tabs) {
+    if (!tab.url) continue;
+    if (tab.url.startsWith(blockedPrefix)) continue;   // already on blocked page
+    if (tab.url.startsWith('chrome://')) continue;     // chrome internal
+    if (tab.url.startsWith('chrome-extension://')) continue;
+
+    for (const domain of domains) {
+      const regex = new RegExp(
+        `^https?://(?:[^/?#]*\\.)?${escapeRegex(domain)}(?:[/?#].*)?$`, 'i'
+      );
+      if (regex.test(tab.url)) {
+        try {
+          await chrome.tabs.update(tab.id, {
+            url: `${blockedPrefix}?site=${encodeURIComponent(domain)}`
+          });
+        } catch { /* tab may have closed */ }
+        break; // one domain matched this tab — move to next tab
+      }
+    }
+  }
+}
+
 // ─────────────────────────────────────────────────────────────
 // BADGE
 // ─────────────────────────────────────────────────────────────
@@ -327,6 +360,9 @@ async function startPomodoro() {
   await chrome.alarms.create('pomodoro_phase_end', { when: endTime });
   await updateBlockingRules();
   await updateBadge();
+  // Immediately redirect open tabs — work phase means block now
+  const blocklist = (await getDecryptedBlocklist()) || [];
+  await redirectBlockedTabs(blocklist);
 }
 
 async function stopPomodoro() {
@@ -393,6 +429,12 @@ async function handlePomodoroAlarm() {
 
   await updateBlockingRules();
   await updateBadge();
+  // If now in work phase, redirect any open tabs on the blocklist
+  const updatedSession = await getSession('pomodoroPhase');
+  if (updatedSession.pomodoroPhase === 'work') {
+    const blocklist = (await getDecryptedBlocklist()) || [];
+    await redirectBlockedTabs(blocklist);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -483,6 +525,8 @@ async function addSiteToBlocklist(domain) {
   const key = await hexToKey(sessionEncKey);
   const newList = [...blocklist, domain];
   await saveBlocklist(newList, key);
+  // Immediately redirect any open tabs that match the new domain
+  await redirectBlockedTabs([domain]);
   return newList;
 }
 
@@ -605,8 +649,14 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === 'pomodoro_phase_end') {
     await handlePomodoroAlarm();
   } else if (alarm.name === 'schedule_check') {
-    // Re-evaluate schedule blocking every minute
+    // Re-evaluate schedule blocking every minute.
+    // If blocking just activated (no rules before, rules now), redirect open tabs.
+    const rulesBefore = await chrome.declarativeNetRequest.getDynamicRules();
     await updateBlockingRules();
+    if (rulesBefore.length === 0 && await isBlockingActive()) {
+      const blocklist = (await getDecryptedBlocklist()) || [];
+      await redirectBlockedTabs(blocklist);
+    }
   } else if (alarm.name === 'hard_mode_end') {
     await updateBlockingRules();
     await updateBadge();
@@ -744,7 +794,10 @@ async function handleMessage(message) {
       const { sessionEncKey } = await getSession('sessionEncKey');
       const key = await hexToKey(sessionEncKey);
       await saveBlocklist(merged, key);
-      return { success: true, blocklist: merged, added: merged.length - existing.length };
+      // Redirect tabs that match only the newly added domains
+      const newDomains = merged.filter(d => !existing.includes(d));
+      await redirectBlockedTabs(newDomains);
+      return { success: true, blocklist: merged, added: newDomains.length };
     }
 
     // ── Schedules ────────────────────────────────────────────
@@ -778,6 +831,11 @@ async function handleMessage(message) {
       await chrome.storage.local.set({ alwaysBlock: message.enabled });
       await updateBlockingRules();
       await updateBadge();
+      // Turning ON: immediately block any open tabs that are on the blocklist
+      if (message.enabled) {
+        const blocklist = (await getDecryptedBlocklist()) || [];
+        await redirectBlockedTabs(blocklist);
+      }
       return { success: true };
     }
 
@@ -827,6 +885,9 @@ async function handleMessage(message) {
       await chrome.alarms.create('hard_mode_end', { when: hardModeUntil });
       await updateBlockingRules();
       await updateBadge();
+      // Immediately redirect any open tabs on the blocklist
+      const blocklist = (await getDecryptedBlocklist()) || [];
+      await redirectBlockedTabs(blocklist);
       return { success: true, hardModeUntil };
     }
 
