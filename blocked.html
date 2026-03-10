@@ -221,7 +221,7 @@
       opacity: 0.8;
     }
 
-    /* ── Unblock section ── */
+    /* ── Peek section ── */
     #unblock-section {
       display: none;
       margin-top: 20px;
@@ -244,14 +244,35 @@
       border-color: var(--accent);
     }
 
-    .unblock-btn:disabled {
-      opacity: 0.5;
-      cursor: default;
-    }
-
     #unblock-form {
       display: none;
       margin-top: 12px;
+    }
+
+    /* Duration picker */
+    .peek-duration-row {
+      display: flex;
+      gap: 6px;
+      justify-content: center;
+      margin-bottom: 10px;
+    }
+
+    .peek-dur-btn {
+      background: rgba(255,255,255,0.5);
+      border: 1px solid rgba(92,107,192,0.25);
+      border-radius: 999px;
+      color: var(--muted);
+      font-size: 12px;
+      padding: 4px 14px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .peek-dur-btn.active {
+      background: var(--chip-bg);
+      border-color: var(--accent);
+      color: var(--accent);
+      font-weight: 600;
     }
 
     .unblock-form-row {
@@ -289,7 +310,7 @@
       transition: opacity 0.15s;
     }
 
-    .unblock-confirm-btn:hover  { opacity: 0.88; }
+    .unblock-confirm-btn:hover    { opacity: 0.88; }
     .unblock-confirm-btn:disabled { opacity: 0.5; cursor: default; }
 
     #unblock-error {
@@ -333,12 +354,17 @@
     </div>
 
     <div id="unblock-section">
-      <button class="unblock-btn" id="unblock-btn">Unblock this site</button>
+      <button class="unblock-btn" id="unblock-btn">👁 Peek for a moment</button>
       <div id="unblock-form">
+        <div class="peek-duration-row">
+          <button class="peek-dur-btn active" data-min="5">5 min</button>
+          <button class="peek-dur-btn" data-min="10">10 min</button>
+          <button class="peek-dur-btn" data-min="15">15 min</button>
+        </div>
         <div class="unblock-form-row">
           <input class="unblock-password-input" type="password" id="unblock-password"
                  placeholder="Enter password" autocomplete="current-password" />
-          <button class="unblock-confirm-btn" id="unblock-confirm">Confirm</button>
+          <button class="unblock-confirm-btn" id="unblock-confirm">Peek</button>
         </div>
         <div id="unblock-error"></div>
       </div>

@@ -74,6 +74,7 @@ async function getSession(keys) {
 // ─────────────────────────────────────────────────────────────
 
 const PBKDF2_ITERATIONS = 200_000;
+const PEEK_RULE_ID      = 9999; // reserved ID for the temporary peek allow rule
 
 function hexToBytes(hex) {
   return new Uint8Array(hex.match(/.{2}/g).map(b => parseInt(b, 16)));
@@ -252,6 +253,20 @@ async function updateBlockingRules() {
       resourceTypes: ['main_frame']
     }
   }));
+
+  // If a peek is active, add a priority-2 allow rule that overrides the block rule
+  const { peekDomain, peekUntil } = await getSession(['peekDomain', 'peekUntil']);
+  if (peekDomain && peekUntil && Date.now() < peekUntil) {
+    addRules.push({
+      id: PEEK_RULE_ID,
+      priority: 2, // higher than block rules (priority 1) — allow wins
+      action: { type: 'allow' },
+      condition: {
+        regexFilter: `^https?://(?:[^/?#]*\\.)?${escapeRegex(peekDomain)}(?:[/?#].*)?$`,
+        resourceTypes: ['main_frame']
+      }
+    });
+  }
 
   await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds, addRules });
 }
@@ -657,6 +672,22 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
       const blocklist = (await getDecryptedBlocklist()) || [];
       await redirectBlockedTabs(blocklist);
     }
+  } else if (alarm.name === 'peek_end') {
+    const { peekDomain } = await getSession('peekDomain');
+    await chrome.storage.session.remove(['peekDomain', 'peekUntil']);
+    // Remove the allow rule and re-block
+    await chrome.declarativeNetRequest.updateDynamicRules({
+      removeRuleIds: [PEEK_RULE_ID], addRules: []
+    });
+    if (peekDomain) {
+      await redirectBlockedTabs([peekDomain]);
+      chrome.notifications.create(`peek_done_${Date.now()}`, {
+        type: 'basic',
+        iconUrl: 'icons/icon48.png',
+        title: '⏰ Peek Over',
+        message: `${peekDomain} is blocked again.`
+      });
+    }
   } else if (alarm.name === 'hard_mode_end') {
     await updateBlockingRules();
     await updateBadge();
@@ -688,7 +719,7 @@ async function handleMessage(message) {
       const session = await getSession([
         'pomodoroRunning', 'pomodoroPhase', 'pomodoroEndTime',
         'pomodoroSessionCount', 'sessionUnlocked', 'lockoutUntil',
-        'failedAttempts', 'pendingContextMenuDomain'
+        'failedAttempts', 'pendingContextMenuDomain', 'peekDomain', 'peekUntil'
       ]);
       const local = await getLocal([
         'schedules', 'pomodoroSettings',
@@ -719,7 +750,12 @@ async function handleMessage(message) {
         blockingActive: await isBlockingActive(),
         // Hard mode: return the end timestamp only if it's still in the future
         hardModeUntil: (local.hardModeUntil && Date.now() < local.hardModeUntil)
-          ? local.hardModeUntil : null
+          ? local.hardModeUntil : null,
+        // Peek: active domain + expiry (null when not peeking)
+        peekDomain: (session.peekDomain && session.peekUntil && Date.now() < session.peekUntil)
+          ? session.peekDomain : null,
+        peekUntil: (session.peekUntil && Date.now() < session.peekUntil)
+          ? session.peekUntil : null
       };
     }
 
@@ -924,12 +960,44 @@ async function handleMessage(message) {
       return { success: true, blocklist };
     }
 
+    // ── Peek (temporary access, max 15 min) ─────────────────
+    case 'PEEK_SITE': {
+      // Hard mode blocks all peeking
+      const { hardModeUntil } = await getLocal('hardModeUntil');
+      if (hardModeUntil && Date.now() < hardModeUntil) {
+        return { error: 'Hard Mode is active — peeking is not allowed.' };
+      }
+
+      const verify = await verifyPassword(message.password);
+      if (!verify.success) return verify; // pass through locked/attemptsRemaining
+
+      const domain     = message.domain;
+      const durationMs = Math.min(Math.max(message.durationMs || 300000, 60000), 15 * 60 * 1000);
+      const peekUntil  = Date.now() + durationMs;
+      const minutes    = Math.round(durationMs / 60000);
+
+      await chrome.storage.session.set({ peekDomain: domain, peekUntil });
+      await chrome.alarms.clear('peek_end');
+      await chrome.alarms.create('peek_end', { when: peekUntil });
+      await updateBlockingRules(); // rebuilds rules including new allow rule
+
+      chrome.notifications.create(`peek_start_${Date.now()}`, {
+        type: 'basic',
+        iconUrl: 'icons/icon48.png',
+        title: '👁 Peek Active',
+        message: `${domain} is accessible for ${minutes} minute${minutes !== 1 ? 's' : ''}. It will be blocked again automatically.`
+      });
+
+      return { success: true, peekUntil };
+    }
+
     // ── Full reset ───────────────────────────────────────────
     case 'RESET_ALL': {
       await chrome.storage.local.clear();
       await chrome.storage.session.clear();
       await chrome.alarms.clear('pomodoro_phase_end');
       await chrome.alarms.clear('hard_mode_end');
+      await chrome.alarms.clear('peek_end');
       const existing = await chrome.declarativeNetRequest.getDynamicRules();
       if (existing.length > 0) {
         await chrome.declarativeNetRequest.updateDynamicRules({

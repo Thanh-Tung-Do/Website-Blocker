@@ -121,37 +121,51 @@ function startPomoCountdown(pomodoroState) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// UNBLOCK BUTTON
+// PEEK BUTTON (temporary access, up to 15 min)
 // ─────────────────────────────────────────────────────────────
 
 function setupUnblockButton(domain, hasPassword, hardActive) {
   // Never show if Hard Mode is active or domain is unknown
   if (hardActive || domain === 'this site') return;
 
-  const section     = document.getElementById('unblock-section');
-  const btn         = document.getElementById('unblock-btn');
-  const form        = document.getElementById('unblock-form');
-  const pwInput     = document.getElementById('unblock-password');
-  const confirmBtn  = document.getElementById('unblock-confirm');
-  const errorDiv    = document.getElementById('unblock-error');
+  const section    = document.getElementById('unblock-section');
+  const btn        = document.getElementById('unblock-btn');
+  const form       = document.getElementById('unblock-form');
+  const pwInput    = document.getElementById('unblock-password');
+  const confirmBtn = document.getElementById('unblock-confirm');
+  const errorDiv   = document.getElementById('unblock-error');
   section.style.display = 'block';
 
-  async function doUnblock() {
+  // Duration selection
+  let selectedMinutes = 5;
+  document.querySelectorAll('.peek-dur-btn').forEach(b => {
+    b.addEventListener('click', () => {
+      document.querySelectorAll('.peek-dur-btn').forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+      selectedMinutes = parseInt(b.dataset.min, 10);
+    });
+  });
+
+  async function doPeek() {
     confirmBtn.disabled = true;
     errorDiv.style.display = 'none';
 
     try {
-      // Verify password first
-      const verify = await chrome.runtime.sendMessage({
-        type: 'VERIFY_PASSWORD', password: pwInput.value
+      const result = await chrome.runtime.sendMessage({
+        type:       'PEEK_SITE',
+        domain,
+        password:   pwInput.value,
+        durationMs: selectedMinutes * 60 * 1000
       });
 
-      if (!verify || !verify.success) {
-        const msg = verify && verify.locked
-          ? `Locked out. Try again in ${verify.remainingMinutes} min.`
-          : verify && verify.attemptsRemaining != null
-            ? `Wrong password. ${verify.attemptsRemaining} attempt(s) left.`
-            : 'Wrong password.';
+      if (!result || !result.success) {
+        const msg = result && result.locked
+          ? `Locked out. Try again in ${result.remainingMinutes} min.`
+          : result && result.attemptsRemaining != null
+            ? `Wrong password. ${result.attemptsRemaining} attempt(s) left.`
+            : result && result.error
+              ? result.error
+              : 'Wrong password.';
         errorDiv.textContent = msg;
         errorDiv.style.display = 'block';
         pwInput.value = '';
@@ -160,16 +174,10 @@ function setupUnblockButton(domain, hasPassword, hardActive) {
         return;
       }
 
-      // Password correct — remove the site
-      const result = await chrome.runtime.sendMessage({ type: 'REMOVE_SITE', domain });
-      if (result && result.success) {
-        confirmBtn.textContent = 'Unblocked!';
-        setTimeout(() => { window.location.href = `https://${domain}`; }, 600);
-      } else {
-        errorDiv.textContent = 'Failed — try from the popup.';
-        errorDiv.style.display = 'block';
-        confirmBtn.disabled = false;
-      }
+      // Peek granted — navigate to the site
+      confirmBtn.textContent = 'Opening…';
+      window.location.href = `https://${domain}`;
+
     } catch {
       errorDiv.textContent = 'Extension unreachable — try from the popup.';
       errorDiv.style.display = 'block';
@@ -177,18 +185,15 @@ function setupUnblockButton(domain, hasPassword, hardActive) {
     }
   }
 
-  // First click reveals the password form
+  // First click reveals the form
   btn.addEventListener('click', () => {
     btn.style.display = 'none';
     form.style.display = 'block';
     pwInput.focus();
   });
 
-  confirmBtn.addEventListener('click', doUnblock);
-
-  pwInput.addEventListener('keydown', e => {
-    if (e.key === 'Enter') doUnblock();
-  });
+  confirmBtn.addEventListener('click', doPeek);
+  pwInput.addEventListener('keydown', e => { if (e.key === 'Enter') doPeek(); });
 }
 
 // ─────────────────────────────────────────────────────────────
