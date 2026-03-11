@@ -293,15 +293,6 @@ function refreshAllModeChips() {
       document.getElementById('pomo-no-list-warning').classList.toggle('visible', ids.length === 0);
     });
   }
-  if (!(state.hardModeUntil && Date.now() < state.hardModeUntil)) {
-    document.getElementById('hard-list-row').style.display = multiList ? 'flex' : 'none';
-    if (multiList) {
-      renderListChips('hard-list-chips', hardModeListIds, ids => {
-        hardModeListIds = ids;
-        document.getElementById('hard-no-list-warning').classList.toggle('visible', ids.length === 0);
-      });
-    }
-  }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -994,8 +985,12 @@ function setupHardModeTab() {
 function renderHardModeTab() {
   clearInterval(hardCountdownInterval);
   const hardActive = !!(state.hardModeUntil && Date.now() < state.hardModeUntil);
+
+  // When Hard Mode is active, hide the Always Block card and show only the countdown
+  document.getElementById('ab-card').style.display     = hardActive ? 'none' : '';
+  document.getElementById('ab-list-row').style.display = hardActive ? 'none' : '';
   document.getElementById('hard-idle').style.display   = hardActive ? 'none' : 'flex';
-  document.getElementById('hard-active').style.display = hardActive ? 'flex'  : 'none';
+  document.getElementById('hard-active').style.display = hardActive ? 'flex' : 'none';
 
   if (hardActive) {
     function tick() {
@@ -1007,22 +1002,11 @@ function renderHardModeTab() {
       document.getElementById('hard-countdown').textContent = `${h}:${m}:${s}`;
       if (remaining <= 0) {
         clearInterval(hardCountdownInterval);
-        setTimeout(async () => { await refreshState(); renderHardModeTab(); renderHeader(); }, 1500);
+        setTimeout(async () => { await refreshState(); renderAlwaysBlockTab(); renderHeader(); }, 1500);
       }
     }
     tick();
     hardCountdownInterval = setInterval(tick, 500);
-  } else {
-    hardModeListIds = state.hardModeLists || ['__all__'];
-    const hardMultiList = visibleLists().length >= 2;
-    document.getElementById('hard-list-row').style.display = hardMultiList ? 'flex' : 'none';
-    if (hardMultiList) {
-      renderListChips('hard-list-chips', hardModeListIds, ids => {
-        hardModeListIds = ids;
-        document.getElementById('hard-no-list-warning').classList.toggle('visible', ids.length === 0);
-      });
-      document.getElementById('hard-no-list-warning').classList.toggle('visible', hardModeListIds.length === 0);
-    }
   }
 }
 
@@ -1032,17 +1016,18 @@ async function startHardMode() {
   const minutes = Math.max(0, parseInt(document.getElementById('hard-minutes').value) || 0);
   const durationMs = (hours * 60 + minutes) * 60 * 1000;
   if (durationMs < 60000) { showAlert('Duration Too Short', 'Set a duration of at least 1 minute.', '⏱'); return; }
-  if (hardModeListIds.length === 0) { showAlert('No List Selected', 'Select at least one list before starting Hard Mode.', '🔥'); return; }
+  const listIds = state.alwaysBlockLists || ['__all__'];
+  if (listIds.length === 0) { showAlert('No List Selected', 'Select at least one list in Always Block before starting Hard Mode.', '🔥'); return; }
   const total = hours > 0 ? `${hours}h ${minutes}m` : `${minutes} minute${minutes !== 1 ? 's' : ''}`;
   showConfirm(
     '🔥 Start Hard Mode?',
     `Blocking will be locked for ${total}. You will NOT be able to stop it early — no toggles, no password bypass, no exceptions. Are you sure?`,
     async () => {
-      const result = await send({ type: 'START_HARD_MODE', durationMs, listIds: hardModeListIds });
+      const result = await send({ type: 'START_HARD_MODE', durationMs });
       if (result.error) { showAlert('Error', result.error); return; }
       state.hardModeUntil = result.hardModeUntil;
       renderHeader();
-      renderHardModeTab();
+      renderAlwaysBlockTab();
     }
   );
 }

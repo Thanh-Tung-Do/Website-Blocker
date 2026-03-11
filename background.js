@@ -154,8 +154,8 @@ function escapeRegex(str) { return str.replace(/[.+?^${}()|[\]\\]/g, '\\$&'); }
 async function getActiveBlockState() {
   const { hardModeUntil } = await getLocal('hardModeUntil');
   if (hardModeUntil && Date.now() < hardModeUntil) {
-    const { hardModeLists = ['__all__'] } = await getLocal('hardModeLists');
-    return { active: true, listIds: hardModeLists };
+    const { alwaysBlockLists = ['__all__'] } = await getLocal('alwaysBlockLists');
+    return { active: true, listIds: alwaysBlockLists };
   }
 
   const session = await getSession(['pomodoroRunning', 'pomodoroPhase']);
@@ -610,7 +610,7 @@ async function handleMessage(message) {
       ]);
       const local = await getLocal([
         'schedules', 'pomodoroSettings', 'passwordHash', 'customQuotes',
-        'alwaysBlock', 'hardModeUntil', 'alwaysBlockLists', 'hardModeLists', 'showPrivateLists'
+        'alwaysBlock', 'hardModeUntil', 'alwaysBlockLists', 'showPrivateLists'
       ]);
       let blockLists = (await getDecryptedBlockLists()) || [];
       // Auto-create Default list for existing users who have none
@@ -641,7 +641,6 @@ async function handleMessage(message) {
         pendingContextMenuDomain: session.pendingContextMenuDomain || null,
         alwaysBlock: local.alwaysBlock !== false,
         alwaysBlockLists: local.alwaysBlockLists || ['__all__'],
-        hardModeLists: local.hardModeLists || ['__all__'],
         blockingActive: await isBlockingActive(),
         hardModeUntil: (local.hardModeUntil && Date.now() < local.hardModeUntil) ? local.hardModeUntil : null,
         peekDomain: (session.peekDomain && session.peekUntil && Date.now() < session.peekUntil) ? session.peekDomain : null,
@@ -712,12 +711,11 @@ async function handleMessage(message) {
       const newLists = lists.filter(l => l.id !== message.id);
       await saveBlockLists(newLists, key);
       // Clean up list references in all mode configs
-      const { alwaysBlockLists = ['__all__'], hardModeLists = ['__all__'], schedules = [], pomodoroSettings = {} } =
-        await getLocal(['alwaysBlockLists', 'hardModeLists', 'schedules', 'pomodoroSettings']);
+      const { alwaysBlockLists = ['__all__'], schedules = [], pomodoroSettings = {} } =
+        await getLocal(['alwaysBlockLists', 'schedules', 'pomodoroSettings']);
       const cleanIds = ids => { const f = (ids || ['__all__']).filter(id => id !== message.id); return f.length === 0 ? ['__all__'] : f; };
       await chrome.storage.local.set({
         alwaysBlockLists: cleanIds(alwaysBlockLists),
-        hardModeLists:    cleanIds(hardModeLists),
         schedules:        schedules.map(s => ({ ...s, lists: cleanIds(s.lists || ['__all__']) })),
         pomodoroSettings: { ...pomodoroSettings, lists: cleanIds(pomodoroSettings.lists || ['__all__']) }
       });
@@ -914,8 +912,7 @@ async function handleMessage(message) {
       const durationMs = message.durationMs;
       if (!durationMs || durationMs < 60000) return { error: 'Minimum duration is 1 minute.' };
       const hardModeUntil = Date.now() + durationMs;
-      const listIds = message.listIds || ['__all__'];
-      await chrome.storage.local.set({ hardModeUntil, hardModeLists: listIds });
+      await chrome.storage.local.set({ hardModeUntil });
       await chrome.alarms.clear('hard_mode_end');
       await chrome.alarms.create('hard_mode_end', { when: hardModeUntil });
       await updateBlockingRules();
