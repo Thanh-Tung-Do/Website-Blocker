@@ -36,6 +36,15 @@ function visibleLists() {
   return lists.filter(l => !l.isPrivate);
 }
 
+// Returns true if the given listIds array effectively covers at least one list.
+// When private lists are hidden they auto-block regardless of mode listIds,
+// so an empty selection is still "effective" if private lists exist.
+function hasEffectiveLists(listIds) {
+  if (listIds.length > 0) return true;
+  if (!state.showPrivateLists && (state.blockLists || []).some(l => l.isPrivate)) return true;
+  return false;
+}
+
 // ─────────────────────────────────────────────────────────────
 // INIT
 // ─────────────────────────────────────────────────────────────
@@ -101,7 +110,7 @@ function setupAlwaysBlockTab() {
     if (state.hardModeUntil && Date.now() < state.hardModeUntil) return;
     if (!state.sessionUnlocked) { showModal('unlock'); return; }
     const newVal = !state.alwaysBlock;
-    if (newVal && (state.alwaysBlockLists || ['__all__']).length === 0) {
+    if (newVal && !hasEffectiveLists(state.alwaysBlockLists || ['__all__'])) {
       showAlert('No List Selected', 'Select at least one list before turning on Always Block.', '🚫');
       return;
     }
@@ -156,7 +165,7 @@ function renderAlwaysBlockTab() {
     noListWarn.textContent = on
       ? '⚠ No list selected: nothing is being blocked!'
       : '⚠ No list selected: nothing will be blocked!';
-    noListWarn.classList.toggle('visible', currentIds.length === 0);
+    noListWarn.classList.toggle('visible', !hasEffectiveLists(currentIds));
 
     renderListChips('ab-list-chips', currentIds, ids => {
       // Expand __all__ to full list for comparison
@@ -283,14 +292,14 @@ function refreshAllModeChips() {
   if (multiList) {
     renderListChips('schedule-list-chips', scheduleListIds, ids => {
       scheduleListIds = ids;
-      document.getElementById('sched-no-list-warning').classList.toggle('visible', ids.length === 0);
+      document.getElementById('sched-no-list-warning').classList.toggle('visible', !hasEffectiveLists(ids));
     });
   }
   document.getElementById('pomo-list-row').style.display = multiList ? 'flex' : 'none';
   if (multiList) {
     renderListChips('pomo-list-chips', pomodoroListIds, ids => {
       pomodoroListIds = ids;
-      document.getElementById('pomo-no-list-warning').classList.toggle('visible', ids.length === 0);
+      document.getElementById('pomo-no-list-warning').classList.toggle('visible', !hasEffectiveLists(ids));
     });
   }
 }
@@ -745,9 +754,9 @@ function resetScheduleForm() {
   if (schedMultiList) {
     renderListChips('schedule-list-chips', scheduleListIds, ids => {
       scheduleListIds = ids;
-      document.getElementById('sched-no-list-warning').classList.toggle('visible', ids.length === 0);
+      document.getElementById('sched-no-list-warning').classList.toggle('visible', !hasEffectiveLists(ids));
     });
-    document.getElementById('sched-no-list-warning').classList.toggle('visible', scheduleListIds.length === 0);
+    document.getElementById('sched-no-list-warning').classList.toggle('visible', !hasEffectiveLists(scheduleListIds));
   }
 }
 
@@ -809,15 +818,15 @@ function startEditSchedule(sched) {
   if (schedMultiListEdit) {
     renderListChips('schedule-list-chips', scheduleListIds, ids => {
       scheduleListIds = ids;
-      document.getElementById('sched-no-list-warning').classList.toggle('visible', ids.length === 0);
+      document.getElementById('sched-no-list-warning').classList.toggle('visible', !hasEffectiveLists(ids));
     });
-    document.getElementById('sched-no-list-warning').classList.toggle('visible', scheduleListIds.length === 0);
+    document.getElementById('sched-no-list-warning').classList.toggle('visible', !hasEffectiveLists(scheduleListIds));
   }
 }
 
 function saveSchedule() {
   if (!state.sessionUnlocked) { showModal('unlock'); return; }
-  if (scheduleListIds.length === 0) { showAlert('No List Selected', 'Select at least one list before saving this schedule.', '📅'); return; }
+  if (!hasEffectiveLists(scheduleListIds)) { showAlert('No List Selected', 'Select at least one list before saving this schedule.', '📅'); return; }
   const entry = {
     id:        editingScheduleId || Date.now(),
     name:      document.getElementById('schedule-name').value.trim() || 'Schedule',
@@ -887,9 +896,9 @@ function renderPomodoroTab() {
   if (pomoMultiList) {
     renderListChips('pomo-list-chips', pomodoroListIds, ids => {
       pomodoroListIds = ids;
-      document.getElementById('pomo-no-list-warning').classList.toggle('visible', ids.length === 0);
+      document.getElementById('pomo-no-list-warning').classList.toggle('visible', !hasEffectiveLists(ids));
     });
-    document.getElementById('pomo-no-list-warning').classList.toggle('visible', pomodoroListIds.length === 0);
+    document.getElementById('pomo-no-list-warning').classList.toggle('visible', !hasEffectiveLists(pomodoroListIds));
   }
 
   const startBtn = document.getElementById('btn-pomo-start');
@@ -933,7 +942,7 @@ function formatTime(totalSeconds) {
 
 async function startPomodoro() {
   if (!state.sessionUnlocked) { showModal('unlock'); return; }
-  if (pomodoroListIds.length === 0) { showAlert('No List Selected', 'Select at least one list before starting a Pomodoro session.', '🍅'); return; }
+  if (!hasEffectiveLists(pomodoroListIds)) { showAlert('No List Selected', 'Select at least one list before starting a Pomodoro session.', '🍅'); return; }
   const result = await send({ type: 'START_POMODORO' });
   if (result.error) { showAlert('Error', result.error); return; }
   await refreshState();
@@ -1014,7 +1023,7 @@ async function startHardMode() {
   const durationMs = (hours * 60 + minutes) * 60 * 1000;
   if (durationMs < 60000) { showAlert('Duration Too Short', 'Set a duration of at least 1 minute.', '⏱'); return; }
   const listIds = state.alwaysBlockLists || ['__all__'];
-  if (listIds.length === 0) { showAlert('No List Selected', 'Select at least one list in Always Block before starting Hard Mode.', '🔥'); return; }
+  if (!hasEffectiveLists(listIds)) { showAlert('No List Selected', 'Select at least one list in Always Block before starting Hard Mode.', '🔥'); return; }
   const total = hours > 0 ? `${hours}h ${minutes}m` : `${minutes} minute${minutes !== 1 ? 's' : ''}`;
   showConfirm(
     '🔥 Start Hard Mode?',
