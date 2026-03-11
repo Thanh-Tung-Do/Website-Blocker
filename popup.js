@@ -988,7 +988,8 @@ function renderHardModeTab() {
 
   // When Hard Mode is active, hide the Always Block card and show only the countdown
   document.getElementById('ab-card').style.display     = hardActive ? 'none' : '';
-  document.getElementById('ab-list-row').style.display = hardActive ? 'none' : '';
+  if (hardActive) document.getElementById('ab-list-row').style.display = 'none';
+  // (when inactive, ab-list-row display is already set correctly by renderAlwaysBlockTab)
   document.getElementById('hard-idle').style.display   = hardActive ? 'none' : 'flex';
   document.getElementById('hard-active').style.display = hardActive ? 'flex' : 'none';
 
