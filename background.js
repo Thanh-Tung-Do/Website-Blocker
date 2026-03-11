@@ -193,6 +193,16 @@ async function isBlockingActive() {
   return active;
 }
 
+// Redirects open tabs for `domain` only if it is covered by the currently active mode.
+// Pass the updated lists (after the add) so the check reflects the new state.
+async function redirectIfActivelyBlocked(domain, lists) {
+  const { active, listIds } = await getActiveBlockState();
+  if (!active) return;
+  if (getDomainsFromLists(lists, listIds).includes(domain)) {
+    await redirectBlockedTabs([domain]);
+  }
+}
+
 // Returns the domains that should be blocked right now (mode-aware).
 async function getActiveDomainsForRedirect() {
   const { active, listIds } = await getActiveBlockState();
@@ -478,7 +488,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     const newLists = [...lists];
     newLists[idx] = { ...newLists[idx], sites: [...(newLists[idx].sites || []), domain] };
     await saveBlockLists(newLists, key);
-    await redirectBlockedTabs([domain]);
+    await redirectIfActivelyBlocked(domain, newLists);
     chrome.notifications.create(`ctx_ok_${Date.now()}`, { type: 'basic', iconUrl: 'icons/icon48.png', title: 'Website Blocked', message: `"${domain}" added to "${lists[idx].name}".` });
     await updateContextMenuForTab(tab.id);
   } else {
@@ -487,7 +497,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     if (workingLists.length === 0) workingLists.push({ id: `list_${Date.now()}`, name: 'Default', sites: [] });
     workingLists[0] = { ...workingLists[0], sites: [...(workingLists[0].sites || []), domain] };
     await saveBlockLists(workingLists, key);
-    await redirectBlockedTabs([domain]);
+    await redirectIfActivelyBlocked(domain, workingLists);
     chrome.notifications.create(`ctx_ok_${Date.now()}`, { type: 'basic', iconUrl: 'icons/icon48.png', title: 'Website Blocked', message: `"${domain}" added to "${workingLists[0].name}".` });
     await updateContextMenuForTab(tab.id);
   }
@@ -714,7 +724,7 @@ async function handleMessage(message) {
       if ((lists[idx].sites || []).includes(message.domain)) return { success: true, blockLists: lists };
       const newLists = lists.map((l, i) => i === idx ? { ...l, sites: [...(l.sites || []), message.domain] } : l);
       await saveBlockLists(newLists, key);
-      await redirectBlockedTabs([message.domain]);
+      await redirectIfActivelyBlocked(message.domain, newLists);
       return { success: true, blockLists: newLists };
     }
 
@@ -912,7 +922,7 @@ async function handleMessage(message) {
         workingLists[targetIdx] = { ...workingLists[targetIdx], sites: [...(workingLists[targetIdx].sites || []), pendingContextMenuDomain] };
       }
       await saveBlockLists(workingLists, key);
-      await redirectBlockedTabs([pendingContextMenuDomain]);
+      await redirectIfActivelyBlocked(pendingContextMenuDomain, workingLists);
       await chrome.storage.session.remove('pendingContextMenuDomain');
       chrome.notifications.create(`ctx_ok_${Date.now()}`, { type: 'basic', iconUrl: 'icons/icon48.png', title: 'Website Blocked', message: `${pendingContextMenuDomain} added to "${workingLists[targetIdx].name}".` });
       return { success: true, blockLists: workingLists };
