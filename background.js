@@ -390,6 +390,7 @@ async function verifyPassword(password) {
       } catch { /* start fresh */ }
     }
 
+    refreshCtxMenuForActiveTab();
     return { success: true };
   }
 
@@ -412,8 +413,32 @@ async function isSessionUnlocked() {
 // CONTEXT MENU
 // ─────────────────────────────────────────────────────────────
 
+// Track currently-created submenu item IDs (in-memory; reset on SW restart)
+let _ctxSubmenuIds = [];
+
+async function _removeCtxSubmenu() {
+  for (const id of _ctxSubmenuIds) {
+    try { await chrome.contextMenus.remove(id); } catch {}
+  }
+  _ctxSubmenuIds = [];
+}
+
+async function _buildCtxSubmenu(lists) {
+  await _removeCtxSubmenu();
+  for (const list of lists) {
+    const id = `blockToList_${list.id}`;
+    try {
+      chrome.contextMenus.create({ id, parentId: 'blockSite', title: list.name, contexts: ['all'] });
+      _ctxSubmenuIds.push(id);
+    } catch {}
+  }
+}
+
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  if (info.menuItemId !== 'blockSite') return;
+  const menuItemId = info.menuItemId;
+  const isSubmenuClick = typeof menuItemId === 'string' && menuItemId.startsWith('blockToList_');
+  if (menuItemId !== 'blockSite' && !isSubmenuClick) return;
+
   const url = tab && tab.url;
   if (!url || url.startsWith('chrome://') || url.startsWith('chrome-extension://')) {
     chrome.notifications.create(`ctx_${Date.now()}`, { type: 'basic', iconUrl: 'icons/icon48.png', title: 'Website Blocker', message: 'Cannot block Chrome internal pages.' });
@@ -433,48 +458,75 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   const key = await hexToKey(sessionEncKey);
 
   if (isDomainBlocked(lists, domain)) {
-    // Unblock: remove from all lists immediately (no list choice needed)
+    // Unblock: remove from all lists
     const newLists = lists.map(l => ({ ...l, sites: l.sites.filter(d => d !== domain) }));
     await saveBlockLists(newLists, key);
     chrome.notifications.create(`ctx_unblock_${Date.now()}`, { type: 'basic', iconUrl: 'icons/icon48.png', title: 'Website Unblocked', message: `${domain} removed from all block lists.` });
-    chrome.contextMenus.update('blockSite', { title: 'Block this website' });
-  } else if (lists.length >= 2) {
-    // Multiple lists: store pending and ask user to open popup to choose a list
-    await chrome.storage.session.set({ pendingContextMenuDomain: domain });
-    chrome.notifications.create(`ctx_pick_${Date.now()}`, { type: 'basic', iconUrl: 'icons/icon48.png', title: 'Choose a List', message: `Open the extension to choose which list to add "${domain}" to.` });
+    await updateContextMenuForTab(tab.id);
+  } else if (isSubmenuClick) {
+    // Submenu item clicked — block to the specific list
+    const targetListId = menuItemId.replace('blockToList_', '');
+    const idx = lists.findIndex(l => l.id === targetListId);
+    if (idx === -1) return;
+    const newLists = [...lists];
+    newLists[idx] = { ...newLists[idx], sites: [...(newLists[idx].sites || []), domain] };
+    await saveBlockLists(newLists, key);
+    await redirectBlockedTabs([domain]);
+    chrome.notifications.create(`ctx_ok_${Date.now()}`, { type: 'basic', iconUrl: 'icons/icon48.png', title: 'Website Blocked', message: `"${domain}" added to "${lists[idx].name}".` });
+    await updateContextMenuForTab(tab.id);
   } else {
-    // Single list: block immediately
+    // Parent item clicked with 0–1 lists: block to first (or create default)
     let workingLists = [...lists];
     if (workingLists.length === 0) workingLists.push({ id: `list_${Date.now()}`, name: 'Default', sites: [] });
-    workingLists[0] = { ...workingLists[0], sites: [...workingLists[0].sites, domain] };
+    workingLists[0] = { ...workingLists[0], sites: [...(workingLists[0].sites || []), domain] };
     await saveBlockLists(workingLists, key);
     await redirectBlockedTabs([domain]);
-    chrome.notifications.create(`ctx_ok_${Date.now()}`, { type: 'basic', iconUrl: 'icons/icon48.png', title: 'Website Blocked', message: `${domain} added to "${workingLists[0].name}".` });
-    chrome.contextMenus.update('blockSite', { title: 'Unblock this website' });
+    chrome.notifications.create(`ctx_ok_${Date.now()}`, { type: 'basic', iconUrl: 'icons/icon48.png', title: 'Website Blocked', message: `"${domain}" added to "${workingLists[0].name}".` });
+    await updateContextMenuForTab(tab.id);
   }
 });
 
-async function updateContextMenuTitle(tabId) {
-  let domain;
+async function updateContextMenuForTab(tabId) {
+  let domain = null;
   try {
     const tab = await chrome.tabs.get(tabId);
     if (!tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) {
       chrome.contextMenus.update('blockSite', { title: 'Block this website' });
+      await _removeCtxSubmenu();
       return;
     }
     domain = new URL(tab.url).hostname.replace(/^www\./, '');
   } catch { return; }
+
   const lists = await getDecryptedBlockLists();
-  if (lists === null) { chrome.contextMenus.update('blockSite', { title: 'Block this website' }); return; }
-  chrome.contextMenus.update('blockSite', { title: isDomainBlocked(lists, domain) ? 'Unblock this website' : 'Block this website' });
+  if (lists === null) {
+    chrome.contextMenus.update('blockSite', { title: 'Block this website' });
+    await _removeCtxSubmenu();
+    return;
+  }
+
+  const isBlocked = isDomainBlocked(lists, domain);
+  chrome.contextMenus.update('blockSite', { title: isBlocked ? 'Unblock this website' : 'Block this website' });
+
+  if (!isBlocked && lists.length >= 2) {
+    await _buildCtxSubmenu(lists);
+  } else {
+    await _removeCtxSubmenu();
+  }
 }
 
-chrome.tabs.onActivated.addListener(async (activeInfo) => { await updateContextMenuTitle(activeInfo.tabId); });
+function refreshCtxMenuForActiveTab() {
+  chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+    if (tab) updateContextMenuForTab(tab.id);
+  });
+}
+
+chrome.tabs.onActivated.addListener(async (activeInfo) => { await updateContextMenuForTab(activeInfo.tabId); });
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
   if (changeInfo.status !== 'complete') return;
   try {
     const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (activeTab && activeTab.id === tabId) await updateContextMenuTitle(tabId);
+    if (activeTab && activeTab.id === tabId) await updateContextMenuForTab(tabId);
   } catch {}
 });
 
@@ -603,6 +655,7 @@ async function handleMessage(message) {
       const newList = { id: `list_${Date.now()}`, name: finalName, sites: [] };
       const newLists = [...lists, newList];
       await saveBlockLists(newLists, key);
+      refreshCtxMenuForActiveTab();
       return { success: true, blockLists: newLists, newListId: newList.id };
     }
 
@@ -613,6 +666,7 @@ async function handleMessage(message) {
       const key = await hexToKey(sessionEncKey);
       const newLists = lists.map(l => l.id === message.id ? { ...l, name: message.name } : l);
       await saveBlockLists(newLists, key);
+      refreshCtxMenuForActiveTab();
       return { success: true, blockLists: newLists };
     }
 
@@ -633,6 +687,7 @@ async function handleMessage(message) {
         schedules:        schedules.map(s => ({ ...s, lists: cleanIds(s.lists || ['__all__']) })),
         pomodoroSettings: { ...pomodoroSettings, lists: cleanIds(pomodoroSettings.lists || ['__all__']) }
       });
+      refreshCtxMenuForActiveTab();
       return { success: true, blockLists: newLists };
     }
 
