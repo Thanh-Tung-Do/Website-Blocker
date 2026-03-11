@@ -730,7 +730,20 @@ async function handleMessage(message) {
       await updateBlockingRules();
       await updateBadge();
       if (!message.enabled) await redirectBlockedTabs(await getActiveDomainsForRedirect());
+      refreshCtxMenuForActiveTab();
       return { success: true };
+    }
+
+    case 'TOGGLE_LIST_PRIVACY': {
+      if (!await isSessionUnlocked()) return { error: 'Session locked' };
+      const lists = (await getDecryptedBlockLists()) || [];
+      const { sessionEncKey } = await getSession('sessionEncKey');
+      const key = await hexToKey(sessionEncKey);
+      const newLists = lists.map(l => l.id === message.id ? { ...l, isPrivate: !!message.isPrivate } : l);
+      await saveBlockLists(newLists, key);
+      await updateBlockingRules();
+      refreshCtxMenuForActiveTab();
+      return { success: true, blockLists: newLists };
     }
 
     case 'ADD_SITE_TO_LIST': {

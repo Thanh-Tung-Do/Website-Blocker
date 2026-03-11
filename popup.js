@@ -327,6 +327,7 @@ function setupSitesTab() {
   document.getElementById('btn-new-list').addEventListener('click', createList);
   document.getElementById('btn-new-list-single').addEventListener('click', createList);
   document.getElementById('btn-rename-list').addEventListener('click', renameList);
+  document.getElementById('btn-toggle-private').addEventListener('click', toggleListPrivacy);
   document.getElementById('btn-delete-list').addEventListener('click', deleteList);
 
   document.getElementById('btn-reveal-sites').addEventListener('click', () => {
@@ -379,6 +380,14 @@ function renderListManagement() {
     const isSpecific = !!currentListId;
     document.getElementById('btn-rename-list').style.display = isSpecific ? 'inline-flex' : 'none';
     document.getElementById('btn-delete-list').style.display = isSpecific ? 'inline-flex' : 'none';
+    const togglePrivateBtn = document.getElementById('btn-toggle-private');
+    if (isSpecific) {
+      const selectedList = (state.blockLists || []).find(l => l.id === currentListId);
+      togglePrivateBtn.style.display = 'inline-flex';
+      togglePrivateBtn.textContent = selectedList?.isPrivate ? 'Make Public' : 'Make Private';
+    } else {
+      togglePrivateBtn.style.display = 'none';
+    }
 
   }
 
@@ -440,6 +449,27 @@ function deleteList() {
     },
     'Delete'
   );
+}
+
+function toggleListPrivacy() {
+  if (!currentListId) return;
+  const list = (state.blockLists || []).find(l => l.id === currentListId);
+  if (!list) return;
+  const makingPrivate = !list.isPrivate;
+  const title = makingPrivate ? '🔒 Make List Private' : '🔒 Make List Public';
+  const body  = makingPrivate
+    ? `Enter your password to make "${list.name}" private. It will be hidden everywhere and automatically blocked in all active modes.`
+    : `Enter your password to make "${list.name}" a normal list. It will become visible everywhere and behave like any other list.`;
+  confirmWithPassword(title, body, async () => {
+    const result = await send({ type: 'TOGGLE_LIST_PRIVACY', id: currentListId, isPrivate: makingPrivate });
+    if (result.error) { showAlert('Error', result.error); return; }
+    state.blockLists = result.blockLists;
+    if (makingPrivate && !state.showPrivateLists) currentListId = null;
+    renderListManagement();
+    renderSitesList();
+    refreshAllModeChips();
+    updateImportListSelector();
+  });
 }
 
 async function addSite() {
@@ -1023,16 +1053,22 @@ async function startHardMode() {
 function setupSettingsTab() {
   document.getElementById('btn-change-pw').addEventListener('click', changePassword);
   document.getElementById('btn-add-quote').addEventListener('click', addCustomQuote);
-  document.getElementById('toggle-show-private').addEventListener('click', async () => {
+  document.getElementById('toggle-show-private').addEventListener('click', () => {
     if (!state.sessionUnlocked) { showModal('unlock'); return; }
     const newVal = !state.showPrivateLists;
-    const result = await send({ type: 'SET_SHOW_PRIVATE_LISTS', enabled: newVal });
-    if (result.error) { showAlert('Error', result.error); return; }
-    state.showPrivateLists = newVal;
-    renderSettingsTab();
-    renderListManagement();
-    renderSitesList();
-    refreshAllModeChips();
+    const title  = newVal ? '🔒 Show Private Lists' : '🔒 Hide Private Lists';
+    const body   = newVal
+      ? 'Enter your password to reveal private lists and manage them.'
+      : 'Enter your password to hide private lists. They will automatically block in all active modes.';
+    confirmWithPassword(title, body, async () => {
+      const result = await send({ type: 'SET_SHOW_PRIVATE_LISTS', enabled: newVal });
+      if (result.error) { showAlert('Error', result.error); return; }
+      state.showPrivateLists = newVal;
+      renderSettingsTab();
+      renderListManagement();
+      renderSitesList();
+      refreshAllModeChips();
+    });
   });
   document.getElementById('btn-reset').addEventListener('click', () => {
     confirmWithPassword(
