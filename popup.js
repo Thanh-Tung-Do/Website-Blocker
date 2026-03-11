@@ -1053,14 +1053,10 @@ async function startHardMode() {
 function setupSettingsTab() {
   document.getElementById('btn-change-pw').addEventListener('click', changePassword);
   document.getElementById('btn-add-quote').addEventListener('click', addCustomQuote);
-  document.getElementById('toggle-show-private').addEventListener('click', () => {
+  document.getElementById('toggle-show-private').addEventListener('click', async () => {
     if (!state.sessionUnlocked) { showModal('unlock'); return; }
     const newVal = !state.showPrivateLists;
-    const title  = newVal ? '🔒 Show Private Lists' : '🔒 Hide Private Lists';
-    const body   = newVal
-      ? 'Enter your password to reveal private lists and manage them.'
-      : 'Enter your password to hide private lists. They will automatically block in all active modes.';
-    confirmWithPassword(title, body, async () => {
+    const apply = async () => {
       const result = await send({ type: 'SET_SHOW_PRIVATE_LISTS', enabled: newVal });
       if (result.error) { showAlert('Error', result.error); return; }
       state.showPrivateLists = newVal;
@@ -1068,7 +1064,12 @@ function setupSettingsTab() {
       renderListManagement();
       renderSitesList();
       refreshAllModeChips();
-    });
+    };
+    if (newVal) {
+      confirmWithPassword('🔒 Show Private Lists', 'Enter your password to reveal private lists and manage them.', apply);
+    } else {
+      await apply();
+    }
   });
   document.getElementById('btn-reset').addEventListener('click', () => {
     confirmWithPassword(
