@@ -143,9 +143,9 @@ function renderAlwaysBlockTab() {
 
   sub.textContent = hardActive
     ? 'Locked while Hard Mode is active.'
-    : on
-      ? 'Sites in selected lists are blocked at all times.'
-      : 'Always Block is off: blocking only activates on schedule.';
+    : multiList
+      ? (on ? 'Sites in selected lists are blocked at all times.' : 'Always Block is off: blocking only activates on schedule.')
+      : (on ? 'Websites in your list are blocked at all times.' : 'Turn on to block websites at all times.');
 
   const listRow    = document.getElementById('ab-list-row');
   const noListWarn = document.getElementById('ab-no-list-warning');
