@@ -496,11 +496,7 @@ function renderSitesList() {
   const listEl        = document.getElementById('site-list');
   const empty         = document.getElementById('site-empty');
 
-  const allLists   = state.blockLists || [];
-  const totalSites = [...new Set(allLists.flatMap(l => l.sites || []))].length;
-  countText.textContent = totalSites === 0
-    ? 'No sites blocked yet'
-    : `${totalSites} site${totalSites !== 1 ? 's' : ''} blocked`;
+  countText.textContent = '';
 
   if (!sitesRevealed) {
     hiddenState.style.display   = 'block';
