@@ -1226,6 +1226,7 @@ function setupModalButtons() {
     if (!pw) { showError(err, 'Enter your password.'); return; }
     const result = await send({ type: 'VERIFY_PASSWORD', password: pw });
     if (result.success) {
+      document.getElementById('unlock-pw').value = '';
       state.sessionUnlocked = true;
       await refreshState();
       renderUI();
