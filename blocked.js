@@ -18,9 +18,12 @@ function showBuiltInQuote() {
   renderQuote(pickRandom(BUILT_IN_QUOTES));
 }
 
-function upgradeWithCustomQuote(customQuotes) {
-  if (!customQuotes || customQuotes.length === 0) return;
-  renderQuote(pickRandom([...BUILT_IN_QUOTES, ...customQuotes]));
+function upgradeWithCustomQuote(state) {
+  const customQuotes  = state.customQuotes  || [];
+  const useBuiltIn    = state.useBuiltInQuotes !== false;
+  const pool = [...(useBuiltIn ? BUILT_IN_QUOTES : []), ...customQuotes];
+  if (pool.length === 0) return; // keep the initial built-in shown as fallback
+  renderQuote(pickRandom(pool));
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -218,7 +221,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   if (state) {
-    upgradeWithCustomQuote(state.customQuotes);
+    upgradeWithCustomQuote(state);
 
     const hardActive = !!state.hardModeUntil && Date.now() < state.hardModeUntil;
     if (hardActive) {

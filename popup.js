@@ -1045,6 +1045,20 @@ async function startHardMode() {
 function setupSettingsTab() {
   document.getElementById('btn-change-pw').addEventListener('click', changePassword);
   document.getElementById('btn-add-quote').addEventListener('click', addCustomQuote);
+  document.getElementById('btn-import-quotes').addEventListener('click', openImportQuotes);
+  document.getElementById('btn-export-quotes').addEventListener('click', exportQuotes);
+  document.getElementById('btn-import-quotes-cancel').addEventListener('click', hideModal);
+  document.getElementById('btn-import-quotes-submit').addEventListener('click', submitImportQuotes);
+  document.getElementById('btn-edit-quote-cancel').addEventListener('click', hideModal);
+  document.getElementById('btn-edit-quote-save').addEventListener('click', saveEditedQuote);
+  document.getElementById('toggle-builtin-quotes').addEventListener('click', async () => {
+    if (!state.sessionUnlocked) { showModal('unlock'); return; }
+    const newVal = !(state.useBuiltInQuotes !== false);
+    const result = await send({ type: 'SET_USE_BUILT_IN_QUOTES', enabled: newVal });
+    if (result.error) { showAlert('Error', result.error); return; }
+    state.useBuiltInQuotes = newVal;
+    renderSettingsTab();
+  });
   document.getElementById('toggle-show-private').addEventListener('click', async () => {
     if (!state.sessionUnlocked) { showModal('unlock'); return; }
     const newVal = !state.showPrivateLists;
@@ -1081,8 +1095,8 @@ function setupSettingsTab() {
 
 function renderSettingsTab() {
   renderCustomQuotes();
-  const pill = document.getElementById('toggle-show-private');
-  pill.classList.toggle('on', !!state.showPrivateLists);
+  document.getElementById('toggle-show-private').classList.toggle('on', !!state.showPrivateLists);
+  document.getElementById('toggle-builtin-quotes').classList.toggle('on', state.useBuiltInQuotes !== false);
 }
 
 async function changePassword() {
@@ -1123,19 +1137,103 @@ async function removeCustomQuote(index) {
   renderCustomQuotes();
 }
 
+let _editingQuoteIndex = -1;
+
+function editCustomQuote(index) {
+  if (!state.sessionUnlocked) { showModal('unlock'); return; }
+  const q = (state.customQuotes || [])[index];
+  if (!q) return;
+  _editingQuoteIndex = index;
+  document.getElementById('edit-quote-text').value   = q.text;
+  document.getElementById('edit-quote-author').value = q.author;
+  document.getElementById('edit-quote-error').textContent = '';
+  showModal('edit-quote');
+}
+
+async function saveEditedQuote() {
+  const text   = document.getElementById('edit-quote-text').value.trim();
+  const author = document.getElementById('edit-quote-author').value.trim();
+  const errDiv = document.getElementById('edit-quote-error');
+  if (!text) { errDiv.textContent = 'Quote text is required.'; return; }
+  const result = await send({ type: 'EDIT_CUSTOM_QUOTE', index: _editingQuoteIndex, quote: { text, author: author || 'Unknown' } });
+  if (result.error) { errDiv.textContent = result.error; return; }
+  state.customQuotes = result.customQuotes;
+  hideModal();
+  renderCustomQuotes();
+}
+
+function openImportQuotes() {
+  if (!state.sessionUnlocked) { showModal('unlock'); return; }
+  document.getElementById('import-quotes-textarea').value = '';
+  document.getElementById('import-quotes-error').textContent = '';
+  showModal('import-quotes');
+}
+
+async function submitImportQuotes() {
+  const raw    = document.getElementById('import-quotes-textarea').value.trim();
+  const errDiv = document.getElementById('import-quotes-error');
+  if (!raw) { errDiv.textContent = 'Paste some quotes first.'; return; }
+
+  let parsed = [];
+  if (raw.startsWith('[') || raw.startsWith('{')) {
+    try {
+      const data = JSON.parse(raw);
+      parsed = (Array.isArray(data) ? data : [data]).filter(q => q && typeof q.text === 'string' && q.text.trim());
+    } catch {
+      errDiv.textContent = 'Invalid JSON — check the format.';
+      return;
+    }
+  } else {
+    parsed = raw.split('\n').map(line => line.trim()).filter(Boolean).map(line => {
+      // Support both " — " (em dash) and " - " (hyphen) as separator
+      const emIdx = line.lastIndexOf(' \u2014 ');
+      if (emIdx !== -1) return { text: line.slice(0, emIdx).trim(), author: line.slice(emIdx + 3).trim() || 'Unknown' };
+      const hypIdx = line.lastIndexOf(' - ');
+      if (hypIdx !== -1) return { text: line.slice(0, hypIdx).trim(), author: line.slice(hypIdx + 3).trim() || 'Unknown' };
+      return { text: line, author: 'Unknown' };
+    });
+  }
+
+  if (parsed.length === 0) { errDiv.textContent = 'No valid quotes found.'; return; }
+
+  const result = await send({ type: 'IMPORT_CUSTOM_QUOTES', quotes: parsed });
+  if (result.error) { errDiv.textContent = result.error; return; }
+  state.customQuotes = result.customQuotes;
+  hideModal();
+  renderCustomQuotes();
+  showAlert('Imported!', `Added ${result.added} quote(s).${result.skipped > 0 ? ` ${result.skipped} duplicate(s) skipped.` : ''}`, '✅');
+}
+
+function exportQuotes() {
+  const quotes = state.customQuotes || [];
+  if (quotes.length === 0) { showAlert('Nothing to Export', 'Add some custom quotes first.', '📤'); return; }
+  const json = JSON.stringify(quotes, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = 'quotes.json';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 function renderCustomQuotes() {
   const list   = document.getElementById('quote-list');
   const quotes = state.customQuotes || [];
   list.innerHTML = '';
   if (quotes.length === 0) {
-    list.innerHTML = '<div style="font-size:11px;color:var(--text-muted);padding:8px 0">No custom quotes added yet.</div>';
+    list.innerHTML = '<div style="font-size:11px;color:var(--text-muted);padding:8px 0">No custom quotes yet.</div>';
     return;
   }
   quotes.forEach((q, i) => {
     const item = document.createElement('div');
     item.className = 'quote-item';
-    item.innerHTML = `<div class="quote-item-text"><em>${escapeHtml(q.text)}</em> — ${escapeHtml(q.author)}</div><button title="Remove">✕</button>`;
-    item.querySelector('button').addEventListener('click', () => removeCustomQuote(i));
+    item.innerHTML = `
+      <div class="quote-item-text"><em>${escapeHtml(q.text)}</em> — ${escapeHtml(q.author)}</div>
+      <button class="q-btn" title="Edit">✎</button>
+      <button class="q-btn q-del" title="Remove">✕</button>`;
+    item.querySelector('.q-btn:not(.q-del)').addEventListener('click', () => editCustomQuote(i));
+    item.querySelector('.q-del').addEventListener('click', () => removeCustomQuote(i));
     list.appendChild(item);
   });
 }

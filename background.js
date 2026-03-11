@@ -612,7 +612,7 @@ async function handleMessage(message) {
       ]);
       const local = await getLocal([
         'schedules', 'pomodoroSettings', 'passwordHash', 'customQuotes',
-        'alwaysBlock', 'hardModeUntil', 'alwaysBlockLists', 'showPrivateLists'
+        'alwaysBlock', 'hardModeUntil', 'alwaysBlockLists', 'showPrivateLists', 'useBuiltInQuotes'
       ]);
       let blockLists = (await getDecryptedBlockLists()) || [];
       // Auto-create Default list for existing users who have none
@@ -636,6 +636,7 @@ async function handleMessage(message) {
         blockLists,
         schedules: local.schedules || [],
         customQuotes: local.customQuotes || [],
+        useBuiltInQuotes: local.useBuiltInQuotes !== false,
         hasPassword: !!local.passwordHash,
         sessionUnlocked: !!session.sessionUnlocked,
         lockoutUntil: session.lockoutUntil || null,
@@ -919,6 +920,29 @@ async function handleMessage(message) {
       const updated = customQuotes.filter((_, i) => i !== message.index);
       await chrome.storage.local.set({ customQuotes: updated });
       return { success: true, customQuotes: updated };
+    }
+    case 'EDIT_CUSTOM_QUOTE': {
+      if (!await isSessionUnlocked()) return { error: 'Session locked' };
+      const { customQuotes = [] } = await getLocal('customQuotes');
+      if (message.index < 0 || message.index >= customQuotes.length) return { error: 'Invalid quote index.' };
+      const updated = [...customQuotes];
+      updated[message.index] = message.quote;
+      await chrome.storage.local.set({ customQuotes: updated });
+      return { success: true, customQuotes: updated };
+    }
+    case 'IMPORT_CUSTOM_QUOTES': {
+      if (!await isSessionUnlocked()) return { error: 'Session locked' };
+      const { customQuotes = [] } = await getLocal('customQuotes');
+      const existingTexts = new Set(customQuotes.map(q => q.text.toLowerCase().trim()));
+      const incoming = (message.quotes || []).filter(q => q && typeof q.text === 'string' && q.text.trim());
+      const toAdd  = incoming.filter(q => !existingTexts.has(q.text.toLowerCase().trim()));
+      const updated = [...customQuotes, ...toAdd.map(q => ({ text: q.text.trim(), author: (q.author || 'Unknown').trim() }))];
+      await chrome.storage.local.set({ customQuotes: updated });
+      return { success: true, customQuotes: updated, added: toAdd.length, skipped: incoming.length - toAdd.length };
+    }
+    case 'SET_USE_BUILT_IN_QUOTES': {
+      await chrome.storage.local.set({ useBuiltInQuotes: !!message.enabled });
+      return { success: true };
     }
 
     // ── Password change ───────────────────────────────────────

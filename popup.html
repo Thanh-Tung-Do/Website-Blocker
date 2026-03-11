@@ -218,18 +218,27 @@
       padding-bottom: 6px; border-bottom: 1px solid var(--border);
     }
 
-    .quote-list { display: flex; flex-direction: column; gap: 6px; max-height: 140px; overflow-y: auto; }
+    .quote-list { display: flex; flex-direction: column; gap: 6px; max-height: 200px; overflow-y: auto; }
     .quote-item {
       background: var(--surface2); border-radius: var(--radius);
-      padding: 7px 10px; display: flex; gap: 8px; align-items: flex-start;
+      padding: 7px 10px; display: flex; gap: 6px; align-items: flex-start;
     }
     .quote-item-text { flex: 1; font-size: 11px; color: var(--text-muted); line-height: 1.4; }
     .quote-item-text em { color: var(--text); font-style: normal; font-weight: 500; }
-    .quote-item button {
+    .quote-item .q-btn {
       background: none; border: none; cursor: pointer; color: var(--text-muted);
-      font-size: 14px; padding: 0 2px; flex-shrink: 0;
+      font-size: 13px; padding: 0 2px; flex-shrink: 0; line-height: 1;
     }
-    .quote-item button:hover { color: var(--danger); }
+    .quote-item .q-btn:hover { color: var(--accent); }
+    .quote-item .q-btn.q-del:hover { color: var(--danger); }
+    #import-quotes-textarea {
+      width: 100%; background: var(--surface2); border: 1px solid var(--border);
+      border-radius: var(--radius); color: var(--text); padding: 8px 10px;
+      font-size: 12px; font-family: monospace; outline: none; resize: vertical;
+      min-height: 110px; transition: border-color 0.15s;
+    }
+    #import-quotes-textarea:focus { border-color: var(--accent); }
+    #import-quotes-textarea::placeholder { color: var(--text-muted); }
 
     .danger-zone {
       border: 1px solid rgba(239,68,68,0.3);
@@ -734,17 +743,29 @@
 
     <div class="divider"></div>
 
-    <div class="section-title">Custom Quotes</div>
-    <div>
-      <label for="quote-text">Quote text</label>
-      <input type="text" id="quote-text" placeholder="Inspirational quote…" />
+    <div style="display:flex; justify-content:space-between; align-items:center">
+      <div class="section-title" style="border-bottom:none; padding-bottom:0">Quotes</div>
+      <div style="display:flex; gap:6px">
+        <button class="btn btn-ghost" style="padding:3px 10px;font-size:11px" id="btn-import-quotes">Import</button>
+        <button class="btn btn-ghost" style="padding:3px 10px;font-size:11px" id="btn-export-quotes">Export</button>
+      </div>
     </div>
-    <div>
-      <label for="quote-author">Author</label>
-      <input type="text" id="quote-author" placeholder="Author name" />
+    <div style="border-bottom:1px solid var(--border); margin-bottom:8px"></div>
+    <div class="row" style="justify-content:space-between; align-items:center; gap:12px; margin-bottom:10px">
+      <div>
+        <div style="font-size:13px; font-weight:500">Include built-in quotes</div>
+        <div style="font-size:11px; color:var(--text-muted); margin-top:2px">Show the 35 curated quotes on the blocked page</div>
+      </div>
+      <div class="pill-track" id="toggle-builtin-quotes">
+        <div class="pill-thumb"></div>
+      </div>
     </div>
-    <button class="btn btn-ghost btn-full" id="btn-add-quote">Add Quote</button>
     <div class="quote-list" id="quote-list"></div>
+    <div style="display:flex;flex-direction:column;gap:6px;margin-top:10px">
+      <input type="text" id="quote-text" placeholder="Inspirational quote…" />
+      <input type="text" id="quote-author" placeholder="Author (optional)" />
+      <button class="btn btn-ghost btn-full" id="btn-add-quote">+ Add Quote</button>
+    </div>
 
     <div class="divider"></div>
 
@@ -870,6 +891,39 @@
       <div class="modal-btns">
         <button class="btn btn-ghost" id="btn-new-list-cancel">Cancel</button>
         <button class="btn btn-primary" id="btn-new-list-submit">Create List</button>
+      </div>
+    </div>
+
+    <!-- Import quotes modal -->
+    <div class="modal" id="modal-import-quotes" style="display:none">
+      <h2>Import Quotes</h2>
+      <p>Paste quotes below. Supported formats:<br>
+        <code style="background:var(--surface2);padding:1px 5px;border-radius:4px;font-size:11px">[{"text":"...","author":"..."}]</code> (JSON)<br>
+        <code style="background:var(--surface2);padding:1px 5px;border-radius:4px;font-size:11px">Quote text — Author</code> (one per line)
+      </p>
+      <textarea id="import-quotes-textarea" placeholder='[{"text":"Stay focused.","author":"Unknown"}]'></textarea>
+      <div class="error-msg" id="import-quotes-error"></div>
+      <div class="modal-btns">
+        <button class="btn btn-ghost" id="btn-import-quotes-cancel">Cancel</button>
+        <button class="btn btn-primary" id="btn-import-quotes-submit">Import</button>
+      </div>
+    </div>
+
+    <!-- Edit quote modal -->
+    <div class="modal" id="modal-edit-quote" style="display:none">
+      <h2>Edit Quote</h2>
+      <div>
+        <label for="edit-quote-text">Quote text</label>
+        <textarea id="edit-quote-text" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);padding:8px 10px;font-size:12px;outline:none;resize:vertical;min-height:70px;transition:border-color 0.15s;font-family:inherit"></textarea>
+      </div>
+      <div style="margin-top:8px">
+        <label for="edit-quote-author">Author</label>
+        <input type="text" id="edit-quote-author" placeholder="Author name" />
+      </div>
+      <div class="error-msg" id="edit-quote-error"></div>
+      <div class="modal-btns">
+        <button class="btn btn-ghost" id="btn-edit-quote-cancel">Cancel</button>
+        <button class="btn btn-primary" id="btn-edit-quote-save">Save</button>
       </div>
     </div>
 
