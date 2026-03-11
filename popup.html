@@ -270,6 +270,16 @@
     .modal-btns { display: flex; gap: 8px; }
     .modal-btns .btn { flex: 1; }
 
+    /* ── Alert modal (notice/warning) ── */
+    .modal-alert-card {
+      border-color: rgba(245,158,11,0.45);
+      background: linear-gradient(160deg, #1e293b 0%, #1a2438 100%);
+      align-items: center; text-align: center;
+    }
+    .modal-alert-card h2 { color: var(--text); }
+    .modal-alert-card p  { color: var(--text-muted); }
+    .alert-modal-icon { font-size: 38px; line-height: 1; }
+
     /* ── Scrollbars ── */
     ::-webkit-scrollbar { width: 4px; }
     ::-webkit-scrollbar-track { background: transparent; }
@@ -277,37 +287,77 @@
 
     .divider { height: 1px; background: var(--border); }
 
-    /* ── Always-block toggle pill in header ── */
-    .block-pill {
-      display: flex; align-items: center; gap: 7px;
-      border-radius: 999px; padding: 3px 10px 3px 12px;
-      border: 1px solid;
-      transition: background 0.2s, border-color 0.2s;
-      cursor: pointer; user-select: none;
+    /* ── List management bar ── */
+    .list-bar { display: flex; align-items: center; gap: 6px; }
+    .list-bar select {
+      flex: 1; background: var(--surface2); border: 1px solid var(--border);
+      border-radius: var(--radius); color: var(--text); padding: 6px 8px;
+      font-size: 12px; outline: none; cursor: pointer; min-width: 0;
     }
-    .block-pill.on  { background: rgba(99,102,241,0.15); border-color: rgba(99,102,241,0.4); }
-    .block-pill.off { background: rgba(100,116,139,0.10); border-color: rgba(100,116,139,0.25); }
-    .block-pill-label {
-      font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
-      transition: color 0.2s;
-    }
-    .block-pill.on  .block-pill-label { color: var(--accent); }
-    .block-pill.off .block-pill-label { color: var(--text-muted); }
+    .list-bar select:focus { border-color: var(--accent); }
 
-    /* Pure CSS switch inside the pill (no <input>, no double-fire) */
+    /* ── List group header (in "All Lists" site view) ── */
+    .list-group-header {
+      font-size: 10px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--text-muted);
+      padding: 8px 2px 4px; margin-top: 4px;
+    }
+    .list-group-header:first-child { margin-top: 0; }
+
+    /* ── Mode list chips ── */
+    .mode-lists-row { display: flex; flex-direction: column; gap: 5px; }
+    .mode-lists-label {
+      font-size: 10px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--text-muted);
+    }
+    .list-chips-row { display: flex; flex-wrap: wrap; gap: 4px; }
+    .list-chip {
+      display: inline-flex; align-items: center;
+      padding: 3px 10px; border-radius: 999px;
+      font-size: 11px; font-weight: 500; cursor: pointer;
+      border: 1px solid var(--border);
+      background: var(--surface2); color: var(--text-muted);
+      transition: all 0.15s; user-select: none;
+    }
+    .list-chip:hover { border-color: var(--accent); color: var(--text); }
+    .list-chip.active {
+      background: rgba(99,102,241,0.2); border-color: rgba(99,102,241,0.5); color: var(--accent);
+    }
+
+    /* ── Always Block status badge in header (non-clickable) ── */
+    .block-status-badge {
+      display: inline-flex; align-items: center;
+      font-size: 10px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+      padding: 0 9px; height: 20px; border-radius: 999px; border: 1px solid;
+      user-select: none; cursor: default; white-space: nowrap; flex-shrink: 0;
+    }
+    .block-status-badge.on  { color: var(--accent); background: rgba(99,102,241,0.12); border-color: rgba(99,102,241,0.35); }
+    .block-status-badge.off { color: var(--text-muted); background: rgba(100,116,139,0.08); border-color: rgba(100,116,139,0.25); }
+
+    /* ── Always Block tab toggle card ── */
+    .ab-card {
+      background: var(--surface2); border-radius: var(--radius); border: 1px solid var(--border);
+      padding: 14px 16px; display: flex; align-items: center; gap: 14px;
+      cursor: pointer; user-select: none; transition: border-color 0.2s;
+    }
+    .ab-card.on { border-color: rgba(99,102,241,0.45); }
+    .ab-card-info { flex: 1; }
+    .ab-card-title { font-size: 14px; font-weight: 700; }
+    .ab-card-sub { font-size: 11px; color: var(--text-muted); margin-top: 4px; line-height: 1.5; }
+    /* CSS switch reused in the tab card */
     .pill-track {
-      width: 34px; height: 20px;
-      background: var(--border); border-radius: 10px;
+      width: 38px; height: 22px;
+      background: var(--border); border-radius: 11px;
       position: relative; flex-shrink: 0; pointer-events: none;
       transition: background 0.2s;
     }
     .pill-thumb {
-      position: absolute; width: 14px; height: 14px;
+      position: absolute; width: 16px; height: 16px;
       background: white; border-radius: 50%;
       top: 3px; left: 3px; transition: transform 0.2s;
     }
-    .block-pill.on .pill-track { background: var(--accent); }
-    .block-pill.on .pill-thumb { transform: translateX(14px); }
+    .ab-card.on .pill-track { background: var(--accent); }
+    .ab-card.on .pill-thumb { transform: translateX(16px); }
 
     /* ── Sites hidden state ── */
     .sites-hidden {
@@ -399,29 +449,15 @@
     }
     .hard-badge.visible { display: inline-flex; }
 
-    /* Instant CSS tooltip for the always-block pill */
-    .block-pill { position: relative; }
-    .block-pill::after {
-      content: attr(data-tooltip);
-      position: absolute;
-      top: calc(100% + 6px);
-      right: 0;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      color: var(--text-muted);
-      font-size: 11px; font-weight: 400;
-      text-transform: none; letter-spacing: 0;
-      padding: 5px 9px;
-      border-radius: var(--radius);
-      pointer-events: none;
-      opacity: 0;
-      transition: opacity 0.08s;
-      z-index: 50;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.35);
-      width: max-content; max-width: 210px;
-      white-space: normal; line-height: 1.4;
+    /* ── No-list warning ── */
+    .no-list-warning {
+      display: none; align-items: center; gap: 7px;
+      background: rgba(245,158,11,0.15); border: 1px solid rgba(245,158,11,0.5);
+      border-radius: var(--radius); padding: 7px 11px;
+      font-size: 12px; font-weight: 600; color: #fbbf24;
     }
-    .block-pill:hover::after { opacity: 1; }
+    .no-list-warning.visible { display: flex; }
+
   </style>
 </head>
 <body>
@@ -435,13 +471,8 @@
     <div class="header-right">
       <!-- Hard Mode active badge -->
       <span class="hard-badge" id="hard-badge">🔥 Hard</span>
-      <!-- Always-block toggle pill -->
-      <div class="block-pill on" id="block-pill">
-        <span class="block-pill-label" id="block-pill-label">Always Block: ON</span>
-        <div class="pill-track" id="pill-track">
-          <div class="pill-thumb"></div>
-        </div>
-      </div>
+      <!-- Always Block status badge (non-clickable; configure in Block tab) -->
+      <span class="block-status-badge on" id="block-status-badge">Always Block: ON</span>
       <button class="btn-icon" id="btn-lock" title="Lock session">🔒</button>
     </div>
   </header>
@@ -449,6 +480,7 @@
   <!-- Tabs -->
   <div class="tabs" style="font-size:11px">
     <button class="tab-btn active" data-tab="sites">Sites</button>
+    <button class="tab-btn" data-tab="block">Block</button>
     <button class="tab-btn" data-tab="schedule">Schedule</button>
     <button class="tab-btn" data-tab="pomodoro">Pomodoro</button>
     <button class="tab-btn" data-tab="hard">Hard Mode</button>
@@ -457,15 +489,28 @@
 
   <!-- ─── SITES TAB ─── -->
   <div class="tab-panel active" id="tab-sites">
+
+    <!-- List management bar (hidden when only 1 list) -->
+    <div class="list-bar" id="list-bar" style="display:none">
+      <select id="list-selector">
+        <option value="__all__">All Lists</option>
+      </select>
+      <button class="btn btn-ghost" id="btn-new-list" style="font-size:11px; padding:5px 10px; flex-shrink:0">+ New List</button>
+      <button class="btn btn-ghost" id="btn-rename-list" style="font-size:11px; padding:5px 10px; flex-shrink:0; display:none">Rename</button>
+      <button class="btn btn-ghost" id="btn-delete-list" style="font-size:11px; padding:5px 10px; flex-shrink:0; display:none; color:var(--danger)">Delete</button>
+    </div>
+
+    <!-- Add site -->
     <div class="row">
       <div style="flex:1">
-        <label for="site-input">Domain to block</label>
+        <label for="site-input">Add site</label>
         <input type="text" id="site-input" placeholder="e.g. reddit.com" autocomplete="off" />
       </div>
       <button class="btn btn-primary" id="btn-add-site" style="margin-bottom:0">Add</button>
     </div>
 
     <div class="row" style="justify-content:flex-end; gap:6px;">
+      <button class="btn btn-ghost" id="btn-new-list-single" style="font-size:11px; padding:5px 10px">+ New List</button>
       <button class="btn btn-ghost" id="btn-export-sites" style="font-size:11px; padding:5px 10px">⬇ Export</button>
       <button class="btn btn-ghost" id="btn-import-sites" style="font-size:11px; padding:5px 10px">⬆ Import</button>
     </div>
@@ -489,6 +534,25 @@
       <div class="empty-msg" id="site-empty" style="display:none">
         No sites blocked yet.<br/>Add a domain above to get started.
       </div>
+    </div>
+  </div>
+
+  <!-- ─── ALWAYS BLOCK TAB ─── -->
+  <div class="tab-panel" id="tab-block">
+    <div class="ab-card" id="ab-card">
+      <div class="ab-card-info">
+        <div class="ab-card-title">Always Block</div>
+        <div class="ab-card-sub" id="ab-sub">Sites in your lists are blocked at all times.</div>
+      </div>
+      <div class="pill-track" id="ab-track">
+        <div class="pill-thumb"></div>
+      </div>
+    </div>
+    <!-- List chips (only shown when 2+ lists) -->
+    <div class="mode-lists-row" id="ab-list-row" style="display:none">
+      <div class="mode-lists-label">Apply to:</div>
+      <div class="no-list-warning" id="ab-no-list-warning">⚠ No list selected: nothing is being blocked!</div>
+      <div class="list-chips-row" id="ab-list-chips"></div>
     </div>
   </div>
 
@@ -539,6 +603,11 @@
           <button class="day-btn" data-day="6">Sat</button>
         </div>
       </div>
+      <div class="mode-lists-row" id="sched-list-row" style="display:none">
+        <div class="mode-lists-label">Block lists:</div>
+        <div class="no-list-warning" id="sched-no-list-warning">⚠ No list selected: nothing will be blocked!</div>
+        <div class="list-chips-row" id="schedule-list-chips"></div>
+      </div>
       <div class="row">
         <button class="btn btn-primary" id="btn-save-schedule" style="flex:1">Save Schedule</button>
         <button class="btn btn-ghost" id="btn-cancel-schedule" style="display:none">Cancel</button>
@@ -561,7 +630,7 @@
 
     <div class="pomo-controls">
       <button class="btn btn-success btn-full" id="btn-pomo-start">▶ Start</button>
-      <button class="btn btn-danger" id="btn-pomo-stop" style="display:none">■ Stop</button>
+      <button class="btn btn-danger btn-full" id="btn-pomo-stop" style="display:none">■ Stop</button>
     </div>
 
     <div class="divider"></div>
@@ -577,6 +646,11 @@
       </div>
     </div>
 
+    <div class="mode-lists-row" id="pomo-list-row" style="display:none">
+      <div class="mode-lists-label">Block lists during work phase:</div>
+      <div class="no-list-warning" id="pomo-no-list-warning">⚠ No list selected: nothing will be blocked!</div>
+      <div class="list-chips-row" id="pomo-list-chips"></div>
+    </div>
     <button class="btn btn-ghost btn-full" id="btn-save-pomo">Save Settings</button>
   </div>
 
@@ -604,6 +678,11 @@
         </div>
       </div>
 
+      <div class="mode-lists-row" id="hard-list-row" style="display:none">
+        <div class="mode-lists-label">Block lists:</div>
+        <div class="no-list-warning" id="hard-no-list-warning">⚠ No list selected: nothing will be blocked!</div>
+        <div class="list-chips-row" id="hard-list-chips"></div>
+      </div>
       <button class="btn btn-danger btn-full" id="btn-hard-start">🔥 Start Hard Mode</button>
 
       <p style="font-size:11px; color:var(--text-muted); line-height:1.5; margin:0">
@@ -710,6 +789,16 @@
       </div>
     </div>
 
+    <!-- Alert / notice modal (replaces native alert()) -->
+    <div class="modal modal-alert-card" id="modal-alert" style="display:none">
+      <div class="alert-modal-icon" id="alert-icon">⚠️</div>
+      <div>
+        <h2 id="alert-title">Notice</h2>
+        <p id="alert-body"></p>
+      </div>
+      <button class="btn btn-primary btn-full" id="btn-alert-ok">Got it</button>
+    </div>
+
     <!-- Confirm destructive action modal -->
     <div class="modal" id="modal-confirm" style="display:none">
       <h2 id="confirm-title">Are you sure?</h2>
@@ -738,8 +827,14 @@
     <!-- Import domains modal -->
     <div class="modal" id="modal-import" style="display:none">
       <h2>Import Domains</h2>
-      <p>Paste your domains below — one per line. Lines starting with # are ignored. You can copy-paste directly from a .txt file.</p>
-      <textarea id="import-textarea" placeholder="reddit.com&#10;facebook.com&#10;example.com"></textarea>
+      <p>Paste domains below — one per line. Use <code style="background:var(--surface2);padding:1px 5px;border-radius:4px;font-size:11px"># List: Name</code> headers to import into multiple named lists at once.</p>
+      <textarea id="import-textarea" placeholder="# List: Work&#10;facebook.com&#10;twitter.com&#10;&#10;# List: Study&#10;youtube.com&#10;reddit.com"></textarea>
+      <div>
+        <label for="import-list-select">Import into (plain format only)</label>
+        <select id="import-list-select" style="width:100%; background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius); color:var(--text); padding:6px 10px; font-size:12px; outline:none;">
+          <option value="__first__">Default (auto-created)</option>
+        </select>
+      </div>
       <div class="error-msg" id="import-error"></div>
       <div class="modal-btns">
         <button class="btn btn-ghost" id="btn-import-cancel">Cancel</button>
@@ -751,6 +846,10 @@
     <div class="modal" id="modal-ctx-pending" style="display:none">
       <h2>Block via Right-Click</h2>
       <p id="ctx-pending-msg"></p>
+      <div id="ctx-list-row" style="display:none">
+        <label for="ctx-list-select">Add to list</label>
+        <select id="ctx-list-select" style="width:100%; background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius); color:var(--text); padding:6px 10px; font-size:12px; outline:none;"></select>
+      </div>
       <div class="modal-btns">
         <button class="btn btn-ghost" id="btn-ctx-cancel">Dismiss</button>
         <button class="btn btn-primary" id="btn-ctx-confirm">Block It</button>

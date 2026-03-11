@@ -1,9 +1,5 @@
 // popup.js — Popup UI logic
 
-// ─────────────────────────────────────────────────────────────
-// MESSAGING
-// ─────────────────────────────────────────────────────────────
-
 function send(msg) {
   return new Promise((resolve, reject) => {
     chrome.runtime.sendMessage(msg, (response) => {
@@ -21,13 +17,17 @@ let state = null;
 let countdownInterval = null;
 let hardCountdownInterval = null;
 let selectedDays = new Set([1, 2, 3, 4, 5]);
-let editingScheduleId = null; // null = adding new
-
-// Per-popup: whether the blocklist has been revealed this session
+let editingScheduleId = null;
 let sitesRevealed = false;
-
-// Generic "confirm with password" callback
 let pendingPasswordCallback = null;
+
+// Currently selected list ID in Sites tab (null = "All Lists" aggregate view)
+let currentListId = null;
+
+// Per-mode list selections (saved when forms are submitted)
+let scheduleListIds  = ['__all__'];
+let pomodoroListIds  = ['__all__'];
+let hardModeListIds  = ['__all__'];
 
 // ─────────────────────────────────────────────────────────────
 // INIT
@@ -43,7 +43,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupSettingsTab();
   setupModalButtons();
   setupLockButton();
-  setupBlockToggle();
+  setupAlwaysBlockTab();
   renderUI();
 });
 
@@ -56,17 +56,13 @@ async function refreshState() {
 // ─────────────────────────────────────────────────────────────
 
 function renderUI() {
-  if (!state.hasPassword) {
-    showModal('setup');
-    return;
-  }
-  if (!state.sessionUnlocked) {
-    showModal('unlock');
-    return;
-  }
+  if (!state.hasPassword) { showModal('setup'); return; }
+  if (!state.sessionUnlocked) { showModal('unlock'); return; }
   hideModal();
   renderHeader();
+  renderListManagement();
   renderSitesList();
+  renderAlwaysBlockTab();
   renderScheduleTab();
   renderPomodoroTab();
   renderHardModeTab();
@@ -79,77 +75,109 @@ function renderUI() {
 // ─────────────────────────────────────────────────────────────
 
 function renderHeader() {
-  const pill      = document.getElementById('block-pill');
-  const label     = document.getElementById('block-pill-label');
-  const badge     = document.getElementById('hard-badge');
-  const on        = !!state.alwaysBlock;
+  const badge      = document.getElementById('block-status-badge');
+  const hardBadge  = document.getElementById('hard-badge');
+  const on         = !!state.alwaysBlock;
   const hardActive = !!(state.hardModeUntil && Date.now() < state.hardModeUntil);
 
-  // Hard Mode badge
-  badge.classList.toggle('visible', hardActive);
-
-  // Pill state
-  pill.classList.toggle('on',  on);
-  pill.classList.toggle('off', !on);
-  label.textContent = on ? 'Always Block: ON' : 'Always Block: OFF';
-
-  // Disable pill when hard mode is active
-  pill.style.opacity       = hardActive ? '0.4' : '';
-  pill.style.pointerEvents = hardActive ? 'none' : '';
-
-  // Instant CSS tooltip via data-tooltip (avoids browser title-attribute delay)
-  if (hardActive) {
-    pill.dataset.tooltip = 'Always Block is locked — Hard Mode is active.';
-  } else if (on) {
-    pill.dataset.tooltip = 'Always Block ON: sites in your list are blocked at all times until you turn this off.';
-  } else {
-    pill.dataset.tooltip = 'Always Block OFF: blocking only activates during scheduled times.';
-  }
-  pill.removeAttribute('title');
+  hardBadge.classList.toggle('visible', hardActive);
+  badge.textContent = on ? 'Always Block: ON' : 'Always Block: OFF';
+  badge.classList.toggle('on', on);
+  badge.classList.toggle('off', !on);
 }
 
 // ─────────────────────────────────────────────────────────────
-// ALWAYS-BLOCK TOGGLE
+// ALWAYS BLOCK TAB
 // ─────────────────────────────────────────────────────────────
 
-function setupBlockToggle() {
-  document.getElementById('block-pill').addEventListener('click', async (e) => {
-    e.stopPropagation(); // prevent any ancestor handlers from seeing this
-    if (state.hardModeUntil && Date.now() < state.hardModeUntil) return; // hard mode locks this
+function setupAlwaysBlockTab() {
+  document.getElementById('ab-card').addEventListener('click', async () => {
+    if (state.hardModeUntil && Date.now() < state.hardModeUntil) return;
     if (!state.sessionUnlocked) { showModal('unlock'); return; }
-
     const newVal = !state.alwaysBlock;
-
-    // Turning OFF always-block requires password confirmation
+    if (newVal && (state.alwaysBlockLists || ['__all__']).length === 0) {
+      showAlert('No List Selected', 'Select at least one list before turning on Always Block.', '🚫');
+      return;
+    }
     if (!newVal) {
       confirmWithPassword(
-        '🔒 Disable Always-Block',
-        'Enter your master password to turn off always-block mode.',
+        '🔒 Disable Always Block',
+        'Enter your master password to turn off Always Block mode.',
         async () => {
           state.alwaysBlock = false;
           renderHeader();
+          renderAlwaysBlockTab();
           const result = await send({ type: 'SET_ALWAYS_BLOCK', enabled: false });
-          if (result && result.error) {
-            state.alwaysBlock = true;
-            renderHeader();
-            alert(result.error);
-          }
+          if (result && result.error) { state.alwaysBlock = true; renderHeader(); renderAlwaysBlockTab(); showAlert('Error', result.error); }
         },
         'Disable'
       );
       return;
     }
-
-    // Turning ON — no password needed
     state.alwaysBlock = true;
     renderHeader();
+    renderAlwaysBlockTab();
     const result = await send({ type: 'SET_ALWAYS_BLOCK', enabled: true });
-    if (result && result.error) {
-      state.alwaysBlock = false;
-      renderHeader();
-      alert(result.error);
-    }
+    if (result && result.error) { state.alwaysBlock = false; renderHeader(); renderAlwaysBlockTab(); showAlert('Error', result.error); }
   });
+}
+
+function renderAlwaysBlockTab() {
+  const on         = !!state.alwaysBlock;
+  const hardActive = !!(state.hardModeUntil && Date.now() < state.hardModeUntil);
+  const lists      = state.blockLists || [];
+  const multiList  = lists.length >= 2;
+
+  const card = document.getElementById('ab-card');
+  const sub  = document.getElementById('ab-sub');
+
+  card.classList.toggle('on', on);
+  card.style.opacity       = hardActive ? '0.5' : '';
+  card.style.pointerEvents = hardActive ? 'none' : '';
+
+  sub.textContent = hardActive
+    ? 'Locked while Hard Mode is active.'
+    : on
+      ? 'Sites in selected lists are blocked at all times.'
+      : 'Always Block is off: blocking only activates on schedule.';
+
+  const listRow    = document.getElementById('ab-list-row');
+  const noListWarn = document.getElementById('ab-no-list-warning');
+  const currentIds = state.alwaysBlockLists || ['__all__'];
+
+  listRow.style.display = multiList ? 'flex' : 'none';
+  if (multiList) {
+    noListWarn.textContent = on
+      ? '⚠ No list selected: nothing is being blocked!'
+      : '⚠ No list selected: nothing will be blocked!';
+    noListWarn.classList.toggle('visible', currentIds.length === 0);
+
+    renderListChips('ab-list-chips', currentIds, ids => {
+      // Expand __all__ to full list for comparison
+      const expand = arr => (arr.includes('__all__') ? lists.map(l => l.id) : arr);
+      const prevSet = new Set(expand(currentIds));
+      const nextSet = new Set(expand(ids));
+      const isRemoving = [...prevSet].some(id => !nextSet.has(id));
+
+      const apply = async () => {
+        state.alwaysBlockLists = ids;
+        await send({ type: 'SET_ALWAYS_BLOCK_LISTS', listIds: ids });
+        renderAlwaysBlockTab();
+      };
+
+      // Password only needed when Always Block is ON and coverage is being reduced
+      if (on && isRemoving) {
+        confirmWithPassword(
+          '🔒 Remove from Block',
+          'Enter your master password to unblock a list while Always Block is on.',
+          apply,
+          'Remove'
+        );
+      } else {
+        apply();
+      }
+    });
+  }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -171,10 +199,6 @@ function setupTabs() {
 // GENERIC PASSWORD CONFIRMATION
 // ─────────────────────────────────────────────────────────────
 
-// Shows the "reveal" modal repurposed as a generic password gate.
-// title   — heading text
-// body    — instruction paragraph
-// callback — async fn called only if password is verified
 function confirmWithPassword(title, body, callback, btnLabel = 'Confirm') {
   pendingPasswordCallback = callback;
   document.getElementById('reveal-modal-title').textContent = title;
@@ -186,25 +210,122 @@ function confirmWithPassword(title, body, callback, btnLabel = 'Confirm') {
 }
 
 // ─────────────────────────────────────────────────────────────
-// SITES TAB
+// LIST CHIP RENDERER (shared by all mode tabs)
+// ─────────────────────────────────────────────────────────────
+
+// Renders clickable list-chips into containerId.
+// activeListIds: current selection (array of IDs or ['__all__'])
+// onChangeFn: called with new listIds array when selection changes
+function renderListChips(containerId, activeListIds, onChangeFn) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  container.innerHTML = '';
+  const lists = state.blockLists || [];
+  // Treat as __all__ if the flag is set OR if every specific list is selected
+  const allActive = activeListIds.includes('__all__') ||
+    (lists.length > 0 && lists.every(l => activeListIds.includes(l.id)));
+
+  const makeChip = (label, active, onClick) => {
+    const chip = document.createElement('span');
+    chip.className = `list-chip${active ? ' active' : ''}`;
+    chip.textContent = label;
+    chip.addEventListener('click', onClick);
+    return chip;
+  };
+
+  // "All Lists" chip — active when all selected; click again to deselect all
+  container.appendChild(makeChip('All Lists', allActive, () => {
+    const newIds = allActive ? [] : ['__all__'];
+    onChangeFn(newIds);
+    renderListChips(containerId, newIds, onChangeFn);
+  }));
+
+  lists.forEach(l => {
+    // Individual chips light up when allActive OR specifically selected
+    const isActive = allActive || activeListIds.includes(l.id);
+    container.appendChild(makeChip(l.name, isActive, () => {
+      if (allActive) {
+        // Deselect this one, keep all others
+        const newIds = lists.map(x => x.id).filter(id => id !== l.id);
+        const resolved = newIds.length === 0 ? ['__all__'] : newIds;
+        onChangeFn(resolved);
+        renderListChips(containerId, resolved, onChangeFn);
+      } else {
+        let newIds = activeListIds.filter(id => id !== '__all__');
+        if (isActive) {
+          newIds = newIds.filter(id => id !== l.id);
+          if (newIds.length === 0) newIds = ['__all__'];
+        } else {
+          newIds = [...newIds, l.id];
+          // If all lists are now selected, collapse to __all__
+          if (lists.every(x => newIds.includes(x.id))) newIds = ['__all__'];
+        }
+        onChangeFn(newIds);
+        renderListChips(containerId, newIds, onChangeFn);
+      }
+    }));
+  });
+}
+
+// Re-render list chips for all mode tabs (called after lists change)
+function refreshAllModeChips() {
+  const multiList = (state.blockLists || []).length >= 2;
+  renderAlwaysBlockTab();
+  document.getElementById('sched-list-row').style.display = multiList ? 'flex' : 'none';
+  if (multiList) {
+    renderListChips('schedule-list-chips', scheduleListIds, ids => {
+      scheduleListIds = ids;
+      document.getElementById('sched-no-list-warning').classList.toggle('visible', ids.length === 0);
+    });
+  }
+  document.getElementById('pomo-list-row').style.display = multiList ? 'flex' : 'none';
+  if (multiList) {
+    renderListChips('pomo-list-chips', pomodoroListIds, ids => {
+      pomodoroListIds = ids;
+      document.getElementById('pomo-no-list-warning').classList.toggle('visible', ids.length === 0);
+    });
+  }
+  if (!(state.hardModeUntil && Date.now() < state.hardModeUntil)) {
+    document.getElementById('hard-list-row').style.display = multiList ? 'flex' : 'none';
+    if (multiList) {
+      renderListChips('hard-list-chips', hardModeListIds, ids => {
+        hardModeListIds = ids;
+        document.getElementById('hard-no-list-warning').classList.toggle('visible', ids.length === 0);
+      });
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// SITES TAB — list management
 // ─────────────────────────────────────────────────────────────
 
 function setupSitesTab() {
   document.getElementById('btn-add-site').addEventListener('click', addSite);
-  document.getElementById('site-input').addEventListener('keydown', e => {
-    if (e.key === 'Enter') addSite();
-  });
+  document.getElementById('site-input').addEventListener('keydown', e => { if (e.key === 'Enter') addSite(); });
   document.getElementById('btn-export-sites').addEventListener('click', exportBlocklist);
   document.getElementById('btn-import-sites').addEventListener('click', () => {
     document.getElementById('import-textarea').value = '';
     document.getElementById('import-error').classList.remove('visible');
+    updateImportListSelector();
     showModal('import');
   });
+
+  document.getElementById('list-selector').addEventListener('change', (e) => {
+    currentListId = e.target.value === '__all__' ? null : e.target.value;
+    renderListManagement();
+    renderSitesList();
+  });
+
+  document.getElementById('btn-new-list').addEventListener('click', createList);
+  document.getElementById('btn-new-list-single').addEventListener('click', createList);
+  document.getElementById('btn-rename-list').addEventListener('click', renameList);
+  document.getElementById('btn-delete-list').addEventListener('click', deleteList);
 
   document.getElementById('btn-reveal-sites').addEventListener('click', () => {
     confirmWithPassword(
       '🔒 Reveal Blocklist',
-      'Enter your master password to view the list of blocked sites.',
+      'Enter your master password to view your blocked sites.',
       () => { sitesRevealed = true; renderSitesList(); },
       'Show Sites'
     );
@@ -216,43 +337,147 @@ function setupSitesTab() {
   });
 }
 
+// Syncs the list selector dropdown and related UI to current state.
+function renderListManagement() {
+  const lists = state.blockLists || [];
+  const multiList = lists.length >= 2;
+
+  // Show/hide list bar based on list count
+  document.getElementById('list-bar').style.display = multiList ? 'flex' : 'none';
+  // Always show "+ New List" button in single-list row; hide it from list-bar when not multi
+  document.getElementById('btn-new-list-single').style.display = multiList ? 'none' : 'inline-flex';
+
+  if (!multiList) {
+    // Auto-select the only list so Add is immediately usable
+    currentListId = lists.length === 1 ? lists[0].id : null;
+  } else {
+    // Rebuild selector dropdown
+    const selector = document.getElementById('list-selector');
+    selector.innerHTML = '<option value="__all__">All Lists</option>';
+    lists.forEach(l => {
+      const opt = document.createElement('option');
+      opt.value = l.id;
+      opt.textContent = l.name + ` (${(l.sites || []).length})`;
+      selector.appendChild(opt);
+    });
+
+    if (currentListId && lists.find(l => l.id === currentListId)) {
+      selector.value = currentListId;
+    } else {
+      currentListId = null;
+      selector.value = '__all__';
+    }
+
+    const isSpecific = !!currentListId;
+    document.getElementById('btn-rename-list').style.display = isSpecific ? 'inline-flex' : 'none';
+    document.getElementById('btn-delete-list').style.display = isSpecific ? 'inline-flex' : 'none';
+
+  }
+
+  // Add-site input: enabled whenever a specific list is auto-selected or chosen
+  const addBtn   = document.getElementById('btn-add-site');
+  const addInput = document.getElementById('site-input');
+  addBtn.disabled   = !currentListId;
+  addInput.disabled = !currentListId;
+  if (currentListId) {
+    const listName = lists.find(l => l.id === currentListId)?.name || 'list';
+    addInput.placeholder = `e.g. reddit.com`;
+  } else {
+    addInput.placeholder = 'Select a list above to add sites';
+  }
+}
+
+async function createList() {
+  const name = prompt('New list name:');
+  if (!name || !name.trim()) return;
+  const result = await send({ type: 'CREATE_LIST', name: name.trim() });
+  if (result.error) { showAlert('Error', result.error); return; }
+  state.blockLists = result.blockLists;
+  currentListId = result.newListId;
+  renderListManagement();
+  renderSitesList();
+  refreshAllModeChips();
+  updateImportListSelector();
+}
+
+function renameList() {
+  if (!currentListId) return;
+  const list = (state.blockLists || []).find(l => l.id === currentListId);
+  if (!list) return;
+  const name = prompt('New name:', list.name);
+  if (!name || !name.trim() || name.trim() === list.name) return;
+  confirmWithPassword(
+    '🔒 Rename List',
+    `Enter your master password to rename "${list.name}" to "${name.trim()}".`,
+    async () => {
+      const result = await send({ type: 'RENAME_LIST', id: currentListId, name: name.trim() });
+      if (result.error) { showAlert('Error', result.error); return; }
+      state.blockLists = result.blockLists;
+      renderListManagement();
+      refreshAllModeChips();
+    },
+    'Rename'
+  );
+}
+
+function deleteList() {
+  if (!currentListId) return;
+  const list = (state.blockLists || []).find(l => l.id === currentListId);
+  if (!list) return;
+  confirmWithPassword(
+    '🔒 Delete List',
+    `Enter your master password to permanently delete "${list.name}" and all its sites. This cannot be undone.`,
+    async () => {
+      const result = await send({ type: 'DELETE_LIST', id: currentListId });
+      if (result.error) { showAlert('Error', result.error); return; }
+      state.blockLists = result.blockLists;
+      currentListId = null;
+      renderListManagement();
+      renderSitesList();
+      refreshAllModeChips();
+      updateImportListSelector();
+    },
+    'Delete'
+  );
+}
+
 async function addSite() {
   if (!state.sessionUnlocked) { showModal('unlock'); return; }
+  if (!currentListId) { showInlineError('site-input', 'Select a specific list above'); return; }
 
   const input = document.getElementById('site-input');
   let domain  = input.value.trim().toLowerCase();
   if (!domain) return;
-
   try {
     if (domain.includes('://')) domain = new URL(domain).hostname;
     domain = domain.replace(/^www\./, '').split('/')[0];
-  } catch { /* keep as-is */ }
+  } catch {}
 
   if (!domain || !domain.includes('.')) {
     showInlineError('site-input', 'Enter a valid domain (e.g. reddit.com)');
     return;
   }
 
-  const result = await send({ type: 'ADD_SITE', domain });
-  if (result.error) { alert(result.error); return; }
-
-  input.value    = '';
-  state.blocklist = result.blocklist;
+  const result = await send({ type: 'ADD_SITE_TO_LIST', listId: currentListId, domain });
+  if (result.error) { showAlert('Error', result.error); return; }
+  input.value = '';
+  state.blockLists = result.blockLists;
   renderSitesList();
+  renderListManagement(); // update site count in dropdown
 }
 
 function renderSitesList() {
-  const hiddenState    = document.getElementById('sites-hidden-state');
-  const listContainer  = document.getElementById('site-list-container');
-  const countText      = document.getElementById('sites-count-text');
-  const list           = document.getElementById('site-list');
-  const empty          = document.getElementById('site-empty');
-  const sites          = state.blocklist || [];
+  const hiddenState   = document.getElementById('sites-hidden-state');
+  const listContainer = document.getElementById('site-list-container');
+  const countText     = document.getElementById('sites-count-text');
+  const listEl        = document.getElementById('site-list');
+  const empty         = document.getElementById('site-empty');
 
-  const n = sites.length;
-  countText.textContent = n === 0
+  const allLists   = state.blockLists || [];
+  const totalSites = [...new Set(allLists.flatMap(l => l.sites || []))].length;
+  countText.textContent = totalSites === 0
     ? 'No sites blocked yet'
-    : `${n} site${n !== 1 ? 's' : ''} blocked`;
+    : `${totalSites} site${totalSites !== 1 ? 's' : ''} blocked`;
 
   if (!sitesRevealed) {
     hiddenState.style.display   = 'block';
@@ -262,30 +487,64 @@ function renderSitesList() {
 
   hiddenState.style.display   = 'none';
   listContainer.style.display = 'block';
-  list.innerHTML = '';
+  listEl.innerHTML = '';
 
-  if (sites.length === 0) {
-    empty.style.display = 'block';
-    return;
+  if (currentListId === null) {
+    // Aggregate: all lists grouped by list name
+    if (allLists.length === 0) {
+      empty.style.display = 'block';
+      empty.innerHTML = 'No lists yet.<br/>Click <strong>+ New List</strong> above to get started.';
+      return;
+    }
+    let hasSites = false;
+    allLists.forEach(l => {
+      if (!l.sites || l.sites.length === 0) return;
+      hasSites = true;
+      const header = document.createElement('div');
+      header.className = 'list-group-header';
+      header.textContent = l.name;
+      listEl.appendChild(header);
+      l.sites.forEach(domain => listEl.appendChild(createSiteItem(domain, l.id)));
+    });
+    if (!hasSites) {
+      empty.style.display = 'block';
+      empty.innerHTML = 'No sites in any list yet.';
+    } else {
+      empty.style.display = 'none';
+    }
+  } else {
+    // Specific list
+    const targetList = allLists.find(l => l.id === currentListId);
+    if (!targetList || (targetList.sites || []).length === 0) {
+      empty.style.display = 'block';
+      empty.innerHTML = 'No sites in this list yet.<br/>Add a domain above to get started.';
+      return;
+    }
+    empty.style.display = 'none';
+    targetList.sites.forEach(domain => listEl.appendChild(createSiteItem(domain, currentListId)));
   }
-
-  empty.style.display = 'none';
-  sites.forEach(domain => {
-    const item = document.createElement('div');
-    item.className = 'site-item';
-    item.innerHTML = `<span title="${escapeHtml(domain)}">${escapeHtml(domain)}</span><button title="Remove">✕</button>`;
-    item.querySelector('button').addEventListener('click', () => removeSite(domain));
-    list.appendChild(item);
-  });
 }
 
-async function removeSite(domain) {
+function createSiteItem(domain, listId) {
+  const item = document.createElement('div');
+  item.className = 'site-item';
+  item.innerHTML = `<span title="${escapeHtml(domain)}">${escapeHtml(domain)}</span><button title="Remove">✕</button>`;
+  item.querySelector('button').addEventListener('click', () => removeSite(domain, listId));
+  return item;
+}
+
+async function removeSite(domain, listId) {
   if (!state.sessionUnlocked) { showModal('unlock'); return; }
-  const result = await send({ type: 'REMOVE_SITE', domain });
-  if (result.error) { alert(result.error); return; }
-  state.blocklist = result.blocklist;
+  const result = await send({ type: 'REMOVE_SITE_FROM_LIST', domain, listId });
+  if (result.error) { showAlert('Error', result.error); return; }
+  state.blockLists = result.blockLists;
   renderSitesList();
+  renderListManagement();
 }
+
+// ─────────────────────────────────────────────────────────────
+// EXPORT
+// ─────────────────────────────────────────────────────────────
 
 function exportBlocklist() {
   if (!state.sessionUnlocked || !sitesRevealed) {
@@ -307,48 +566,116 @@ function exportBlocklist() {
 }
 
 function doExport() {
-  const sites = state.blocklist || [];
-  if (sites.length === 0) { alert('Your blocklist is empty.'); return; }
-  const blob = new Blob([sites.join('\n')], { type: 'text/plain' });
+  const lists = state.blockLists || [];
+  const hasSites = lists.some(l => (l.sites || []).length > 0);
+  if (!hasSites) { showAlert('Nothing to Export', 'Your block lists are empty.', '📋'); return; }
+
+  let content, filename;
+  if (currentListId) {
+    // Export single selected list — plain domains
+    const targetList = lists.find(l => l.id === currentListId);
+    if (!targetList || (targetList.sites || []).length === 0) { showAlert('Nothing to Export', 'This list is empty.', '📋'); return; }
+    content  = targetList.sites.join('\n');
+    filename = `blocklist-${targetList.name.replace(/\s+/g, '-').toLowerCase()}.txt`;
+  } else {
+    // Export all lists with # List: headers
+    const parts = lists
+      .filter(l => (l.sites || []).length > 0)
+      .map(l => `# List: ${l.name}\n${l.sites.join('\n')}`);
+    content  = parts.join('\n');
+    filename = 'blocklist-all.txt';
+  }
+
+  const blob = new Blob([content], { type: 'text/plain' });
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
-  a.href     = url;
-  a.download = 'blocklist.txt';
-  document.body.appendChild(a);
-  a.click();
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
 
+// ─────────────────────────────────────────────────────────────
+// IMPORT
+// ─────────────────────────────────────────────────────────────
+
+function updateImportListSelector() {
+  const select = document.getElementById('import-list-select');
+  if (!select) return;
+  const lists = state.blockLists || [];
+  select.innerHTML = '';
+  if (lists.length === 0) {
+    const opt = document.createElement('option');
+    opt.value = '__first__'; opt.textContent = 'Default (auto-created)';
+    select.appendChild(opt);
+  } else {
+    lists.forEach(l => {
+      const opt = document.createElement('option');
+      opt.value = l.id; opt.textContent = l.name;
+      select.appendChild(opt);
+    });
+    if (currentListId && lists.find(l => l.id === currentListId)) select.value = currentListId;
+  }
+}
+
+// Parses import text. Returns [{name: string|null, domains: string[]}]
+// name is null for domains not under a # List: header.
+function parseImportText(text) {
+  const result = [];
+  let current = null;
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    const m = line.match(/^#\s*[Ll]ist:\s*(.+)$/);
+    if (m) { current = { name: m[1].trim(), domains: [] }; result.push(current); continue; }
+    if (line.startsWith('#')) continue;
+    let d = line.toLowerCase();
+    try { if (d.includes('://')) d = new URL(d).hostname; } catch { continue; }
+    d = d.replace(/^www\./, '').split('/')[0];
+    if (!d.includes('.') || d.includes(' ') || d.length > 253) continue;
+    if (!current) { current = { name: null, domains: [] }; result.push(current); }
+    current.domains.push(d);
+  }
+  return result;
+}
+
 async function importBlocklist() {
   if (!state.sessionUnlocked) { showModal('unlock'); return; }
-
-  const text    = document.getElementById('import-textarea').value;
-  const err     = document.getElementById('import-error');
+  const text = document.getElementById('import-textarea').value;
+  const err  = document.getElementById('import-error');
   err.classList.remove('visible');
 
-  const domains = text.split(/\r?\n/)
-    .map(l => {
-      let d = l.trim().toLowerCase();
-      if (!d || d.startsWith('#')) return '';
-      try { if (d.includes('://')) d = new URL(d).hostname; } catch { return ''; }
-      d = d.replace(/^www\./, '').split('/')[0];
-      return (d.includes('.') && !d.includes(' ') && d.length <= 253) ? d : '';
-    })
-    .filter(Boolean);
-
-  if (domains.length === 0) {
+  const sections = parseImportText(text);
+  if (sections.every(s => s.domains.length === 0)) {
     showError(err, 'No valid domains found. Enter one domain per line.');
     return;
   }
 
-  const result = await send({ type: 'IMPORT_SITES', domains });
-  if (result.error) { showError(err, result.error); return; }
+  const hasListHeaders = sections.some(s => s.name !== null);
+  let result;
 
-  state.blocklist = result.blocklist;
+  if (hasListHeaders) {
+    // Multi-list: group by named sections, merge ungrouped into first named section
+    const listImports = sections.filter(s => s.name !== null && s.domains.length > 0).map(s => ({ name: s.name, domains: s.domains }));
+    const ungrouped = sections.filter(s => s.name === null).flatMap(s => s.domains);
+    if (ungrouped.length > 0) {
+      if (listImports.length > 0) listImports[0].domains = [...new Set([...listImports[0].domains, ...ungrouped])];
+      else listImports.push({ name: 'Imported', domains: ungrouped });
+    }
+    result = await send({ type: 'IMPORT_SITES', listImports });
+  } else {
+    const listId = document.getElementById('import-list-select')?.value || null;
+    const domains = sections.flatMap(s => s.domains);
+    result = await send({ type: 'IMPORT_SITES', domains, listId });
+  }
+
+  if (result.error) { showError(err, result.error); return; }
+  state.blockLists = result.blockLists;
   document.getElementById('import-textarea').value = '';
   hideModal();
+  renderListManagement();
   renderSitesList();
+  refreshAllModeChips();
 
   const btn  = document.getElementById('btn-import-sites');
   const orig = btn.textContent;
@@ -364,7 +691,7 @@ function showInlineError(inputId, msg) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// SCHEDULE TAB  — every save/delete requires password re-entry
+// SCHEDULE TAB
 // ─────────────────────────────────────────────────────────────
 
 function setupScheduleTab() {
@@ -381,6 +708,7 @@ function setupScheduleTab() {
 
 function resetScheduleForm() {
   editingScheduleId = null;
+  scheduleListIds   = ['__all__'];
   document.getElementById('sched-form-title').textContent = 'Add Schedule';
   document.getElementById('schedule-name').value          = '';
   document.getElementById('schedule-enabled').checked     = true;
@@ -391,6 +719,15 @@ function resetScheduleForm() {
     btn.classList.toggle('selected', selectedDays.has(parseInt(btn.dataset.day)));
   });
   document.getElementById('btn-cancel-schedule').style.display = 'none';
+  const schedMultiList = (state.blockLists || []).length >= 2;
+  document.getElementById('sched-list-row').style.display = schedMultiList ? 'flex' : 'none';
+  if (schedMultiList) {
+    renderListChips('schedule-list-chips', scheduleListIds, ids => {
+      scheduleListIds = ids;
+      document.getElementById('sched-no-list-warning').classList.toggle('visible', ids.length === 0);
+    });
+    document.getElementById('sched-no-list-warning').classList.toggle('visible', scheduleListIds.length === 0);
+  }
 }
 
 function renderScheduleTab() {
@@ -398,7 +735,6 @@ function renderScheduleTab() {
   const list  = document.getElementById('schedule-list');
   const empty = document.getElementById('schedule-empty');
   list.innerHTML = '';
-
   const DAY_ABBR = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 
   if (schedules.length === 0) {
@@ -407,30 +743,35 @@ function renderScheduleTab() {
     empty.style.display = 'none';
     schedules.forEach(sched => {
       const dayStr  = (sched.days || []).sort((a, b) => a - b).map(d => DAY_ABBR[d]).join(' ');
-      const card    = document.createElement('div');
+      const listStr = (() => {
+        const ids = sched.lists || ['__all__'];
+        if (ids.includes('__all__')) return 'All Lists';
+        const names = ids.map(id => (state.blockLists || []).find(l => l.id === id)?.name).filter(Boolean);
+        return names.length > 0 ? names.join(', ') : 'All Lists';
+      })();
+      const card = document.createElement('div');
       card.className = 'sched-card';
       card.innerHTML = `
         <div class="sched-card-dot ${sched.enabled ? 'on' : 'off'}"></div>
         <div class="sched-card-info">
           <div class="sched-card-name">${escapeHtml(sched.name || 'Schedule')}</div>
-          <div class="sched-card-sub">${escapeHtml(sched.startTime)} – ${escapeHtml(sched.endTime)} · ${escapeHtml(dayStr || 'No days')}</div>
+          <div class="sched-card-sub">${escapeHtml(sched.startTime)} – ${escapeHtml(sched.endTime)} · ${escapeHtml(dayStr || 'No days')} · ${escapeHtml(listStr)}</div>
         </div>
         <div class="sched-card-btns">
           <button class="edit" title="Edit">✏</button>
           <button class="del"  title="Delete">✕</button>
-        </div>
-      `;
+        </div>`;
       card.querySelector('.edit').addEventListener('click', () => startEditSchedule(sched));
       card.querySelector('.del').addEventListener('click',  () => deleteSchedule(sched.id));
       list.appendChild(card);
     });
   }
-
   if (!editingScheduleId) resetScheduleForm();
 }
 
 function startEditSchedule(sched) {
   editingScheduleId = sched.id;
+  scheduleListIds   = sched.lists || ['__all__'];
   document.getElementById('sched-form-title').textContent    = 'Edit Schedule';
   document.getElementById('schedule-name').value             = sched.name || '';
   document.getElementById('schedule-enabled').checked        = !!sched.enabled;
@@ -442,21 +783,29 @@ function startEditSchedule(sched) {
   });
   document.getElementById('btn-cancel-schedule').style.display = 'inline-flex';
   document.getElementById('schedule-form').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  const schedMultiListEdit = (state.blockLists || []).length >= 2;
+  document.getElementById('sched-list-row').style.display = schedMultiListEdit ? 'flex' : 'none';
+  if (schedMultiListEdit) {
+    renderListChips('schedule-list-chips', scheduleListIds, ids => {
+      scheduleListIds = ids;
+      document.getElementById('sched-no-list-warning').classList.toggle('visible', ids.length === 0);
+    });
+    document.getElementById('sched-no-list-warning').classList.toggle('visible', scheduleListIds.length === 0);
+  }
 }
 
 function saveSchedule() {
   if (!state.sessionUnlocked) { showModal('unlock'); return; }
-
-  // Capture form values before the modal opens
+  if (scheduleListIds.length === 0) { showAlert('No List Selected', 'Select at least one list before saving this schedule.', '📅'); return; }
   const entry = {
     id:        editingScheduleId || Date.now(),
     name:      document.getElementById('schedule-name').value.trim() || 'Schedule',
     enabled:   document.getElementById('schedule-enabled').checked,
     startTime: document.getElementById('schedule-start').value,
     endTime:   document.getElementById('schedule-end').value,
-    days:      [...selectedDays]
+    days:      [...selectedDays],
+    lists:     scheduleListIds
   };
-
   const existing     = state.schedules || [];
   const newSchedules = editingScheduleId
     ? existing.map(s => s.id === editingScheduleId ? entry : s)
@@ -467,7 +816,7 @@ function saveSchedule() {
     'Enter your master password to save changes to the blocking schedule.',
     async () => {
       const result = await send({ type: 'UPDATE_SCHEDULES', schedules: newSchedules });
-      if (result.error) { alert(result.error); return; }
+      if (result.error) { showAlert('Error', result.error); return; }
       state.schedules = newSchedules;
       resetScheduleForm();
       renderScheduleTab();
@@ -485,7 +834,7 @@ function deleteSchedule(id) {
     'Enter your master password to delete this schedule.',
     async () => {
       const result = await send({ type: 'UPDATE_SCHEDULES', schedules: newSchedules });
-      if (result.error) { alert(result.error); return; }
+      if (result.error) { showAlert('Error', result.error); return; }
       state.schedules = newSchedules;
       if (editingScheduleId === id) resetScheduleForm();
       renderScheduleTab();
@@ -506,15 +855,24 @@ function setupPomodoroTab() {
 
 function renderPomodoroTab() {
   clearInterval(countdownInterval);
-
   const pomo = state.pomodoro;
   document.getElementById('pomo-work').value  = pomo.settings.workDuration  || 25;
   document.getElementById('pomo-break').value = pomo.settings.breakDuration || 5;
   document.getElementById('pomo-sessions').textContent = `Sessions completed: ${pomo.sessionCount || 0}`;
 
+  pomodoroListIds = pomo.settings.lists || ['__all__'];
+  const pomoMultiList = (state.blockLists || []).length >= 2;
+  document.getElementById('pomo-list-row').style.display = pomoMultiList ? 'flex' : 'none';
+  if (pomoMultiList) {
+    renderListChips('pomo-list-chips', pomodoroListIds, ids => {
+      pomodoroListIds = ids;
+      document.getElementById('pomo-no-list-warning').classList.toggle('visible', ids.length === 0);
+    });
+    document.getElementById('pomo-no-list-warning').classList.toggle('visible', pomodoroListIds.length === 0);
+  }
+
   const startBtn = document.getElementById('btn-pomo-start');
   const stopBtn  = document.getElementById('btn-pomo-stop');
-
   if (pomo.running) {
     startBtn.style.display = 'none';
     stopBtn.style.display  = 'inline-flex';
@@ -532,15 +890,11 @@ function startCountdownTick() {
   function tick() {
     const pomo = state.pomodoro;
     if (!pomo.running || !pomo.endTime) return;
-
     const remaining = Math.max(0, pomo.endTime - Date.now());
     const secs = Math.floor(remaining / 1000);
-
     document.getElementById('pomo-countdown').textContent = formatTime(secs);
     document.getElementById('pomo-phase').textContent     = pomo.phase === 'work' ? 'Work' : 'Break';
-    document.getElementById('pomo-countdown').className   =
-      `pomo-countdown ${pomo.phase === 'work' ? 'work' : 'break'}`;
-
+    document.getElementById('pomo-countdown').className   = `pomo-countdown ${pomo.phase === 'work' ? 'work' : 'break'}`;
     if (remaining <= 0) {
       clearInterval(countdownInterval);
       setTimeout(async () => { await refreshState(); renderPomodoroTab(); renderHeader(); }, 1500);
@@ -558,8 +912,9 @@ function formatTime(totalSeconds) {
 
 async function startPomodoro() {
   if (!state.sessionUnlocked) { showModal('unlock'); return; }
+  if (pomodoroListIds.length === 0) { showAlert('No List Selected', 'Select at least one list before starting a Pomodoro session.', '🍅'); return; }
   const result = await send({ type: 'START_POMODORO' });
-  if (result.error) { alert(result.error); return; }
+  if (result.error) { showAlert('Error', result.error); return; }
   await refreshState();
   renderPomodoroTab();
   renderHeader();
@@ -567,16 +922,17 @@ async function startPomodoro() {
 
 async function stopPomodoro() {
   if (!state.sessionUnlocked) { showModal('unlock'); return; }
-  showConfirm(
-    'Stop Pomodoro?',
-    'This will end the current session and restore normal blocking mode.',
+  confirmWithPassword(
+    '🔒 Stop Pomodoro',
+    'Enter your master password to stop the current Pomodoro session.',
     async () => {
       const result = await send({ type: 'STOP_POMODORO' });
-      if (result.error) { alert(result.error); return; }
+      if (result.error) { showAlert('Error', result.error); return; }
       await refreshState();
       renderPomodoroTab();
       renderHeader();
-    }
+    },
+    'Stop'
   );
 }
 
@@ -584,10 +940,11 @@ async function savePomodoroSettings() {
   if (!state.sessionUnlocked) { showModal('unlock'); return; }
   const settings = {
     workDuration:  Math.max(1, parseInt(document.getElementById('pomo-work').value)  || 25),
-    breakDuration: Math.max(1, parseInt(document.getElementById('pomo-break').value) || 5)
+    breakDuration: Math.max(1, parseInt(document.getElementById('pomo-break').value) || 5),
+    lists: pomodoroListIds
   };
   const result = await send({ type: 'UPDATE_POMODORO_SETTINGS', settings });
-  if (result.error) { alert(result.error); return; }
+  if (result.error) { showAlert('Error', result.error); return; }
   state.pomodoro.settings = settings;
   flashButton('btn-save-pomo', 'Saved!');
 }
@@ -602,55 +959,53 @@ function setupHardModeTab() {
 
 function renderHardModeTab() {
   clearInterval(hardCountdownInterval);
-
   const hardActive = !!(state.hardModeUntil && Date.now() < state.hardModeUntil);
-  document.getElementById('hard-idle').style.display   = hardActive ? 'none'  : 'flex';
+  document.getElementById('hard-idle').style.display   = hardActive ? 'none' : 'flex';
   document.getElementById('hard-active').style.display = hardActive ? 'flex'  : 'none';
 
-  if (!hardActive) return;
-
-  function tick() {
-    const remaining = Math.max(0, state.hardModeUntil - Date.now());
-    const totalSecs = Math.floor(remaining / 1000);
-    const h = Math.floor(totalSecs / 3600).toString().padStart(2, '0');
-    const m = Math.floor((totalSecs % 3600) / 60).toString().padStart(2, '0');
-    const s = (totalSecs % 60).toString().padStart(2, '0');
-    document.getElementById('hard-countdown').textContent = `${h}:${m}:${s}`;
-    if (remaining <= 0) {
-      clearInterval(hardCountdownInterval);
-      setTimeout(async () => {
-        await refreshState();
-        renderHardModeTab();
-        renderHeader();
-      }, 1500);
+  if (hardActive) {
+    function tick() {
+      const remaining = Math.max(0, state.hardModeUntil - Date.now());
+      const totalSecs = Math.floor(remaining / 1000);
+      const h = Math.floor(totalSecs / 3600).toString().padStart(2, '0');
+      const m = Math.floor((totalSecs % 3600) / 60).toString().padStart(2, '0');
+      const s = (totalSecs % 60).toString().padStart(2, '0');
+      document.getElementById('hard-countdown').textContent = `${h}:${m}:${s}`;
+      if (remaining <= 0) {
+        clearInterval(hardCountdownInterval);
+        setTimeout(async () => { await refreshState(); renderHardModeTab(); renderHeader(); }, 1500);
+      }
+    }
+    tick();
+    hardCountdownInterval = setInterval(tick, 500);
+  } else {
+    hardModeListIds = state.hardModeLists || ['__all__'];
+    const hardMultiList = (state.blockLists || []).length >= 2;
+    document.getElementById('hard-list-row').style.display = hardMultiList ? 'flex' : 'none';
+    if (hardMultiList) {
+      renderListChips('hard-list-chips', hardModeListIds, ids => {
+        hardModeListIds = ids;
+        document.getElementById('hard-no-list-warning').classList.toggle('visible', ids.length === 0);
+      });
+      document.getElementById('hard-no-list-warning').classList.toggle('visible', hardModeListIds.length === 0);
     }
   }
-  tick();
-  hardCountdownInterval = setInterval(tick, 500);
 }
 
 async function startHardMode() {
   if (!state.sessionUnlocked) { showModal('unlock'); return; }
-
   const hours   = Math.max(0, parseInt(document.getElementById('hard-hours').value)   || 0);
   const minutes = Math.max(0, parseInt(document.getElementById('hard-minutes').value) || 0);
   const durationMs = (hours * 60 + minutes) * 60 * 1000;
-
-  if (durationMs < 60000) {
-    alert('Set a duration of at least 1 minute.');
-    return;
-  }
-
-  const total = hours > 0
-    ? `${hours}h ${minutes}m`
-    : `${minutes} minute${minutes !== 1 ? 's' : ''}`;
-
+  if (durationMs < 60000) { showAlert('Duration Too Short', 'Set a duration of at least 1 minute.', '⏱'); return; }
+  if (hardModeListIds.length === 0) { showAlert('No List Selected', 'Select at least one list before starting Hard Mode.', '🔥'); return; }
+  const total = hours > 0 ? `${hours}h ${minutes}m` : `${minutes} minute${minutes !== 1 ? 's' : ''}`;
   showConfirm(
     '🔥 Start Hard Mode?',
     `Blocking will be locked for ${total}. You will NOT be able to stop it early — no toggles, no password bypass, no exceptions. Are you sure?`,
     async () => {
-      const result = await send({ type: 'START_HARD_MODE', durationMs });
-      if (result.error) { alert(result.error); return; }
+      const result = await send({ type: 'START_HARD_MODE', durationMs, listIds: hardModeListIds });
+      if (result.error) { showAlert('Error', result.error); return; }
       state.hardModeUntil = result.hardModeUntil;
       renderHeader();
       renderHardModeTab();
@@ -668,10 +1023,11 @@ function setupSettingsTab() {
   document.getElementById('btn-reset').addEventListener('click', () => {
     confirmWithPassword(
       '⚠️ Reset All Settings?',
-      'Enter your master password to permanently erase your blocklist, schedule, password, and all settings. This cannot be undone.',
+      'Enter your master password to permanently erase your block lists, schedule, password, and all settings. This cannot be undone.',
       async () => {
         await send({ type: 'RESET_ALL' });
         sitesRevealed = false;
+        currentListId = null;
         await refreshState();
         renderUI();
       },
@@ -680,25 +1036,19 @@ function setupSettingsTab() {
   });
 }
 
-function renderSettingsTab() {
-  renderCustomQuotes();
-}
+function renderSettingsTab() { renderCustomQuotes(); }
 
 async function changePassword() {
   if (!state.sessionUnlocked) { showModal('unlock'); return; }
-
   const currentPw = document.getElementById('current-password').value;
   const newPw     = document.getElementById('new-password').value;
   const confirmPw = document.getElementById('confirm-password').value;
-
-  if (!currentPw)          return alert('Enter your current password.');
-  if (!newPw)              return alert('Enter a new password.');
-  if (newPw.length < 4)   return alert('New password must be at least 4 characters.');
-  if (newPw !== confirmPw) return alert('New passwords do not match.');
-
+  if (!currentPw)          return showAlert('Missing Password', 'Enter your current password.', '🔒');
+  if (!newPw)              return showAlert('Missing Password', 'Enter a new password.', '🔒');
+  if (newPw.length < 4)   return showAlert('Too Short', 'New password must be at least 4 characters.', '🔒');
+  if (newPw !== confirmPw) return showAlert('Mismatch', 'New passwords do not match.', '🔒');
   const result = await send({ type: 'CHANGE_PASSWORD', currentPassword: currentPw, newPassword: newPw });
-  if (result.error) { alert(result.error); return; }
-
+  if (result.error) { showAlert('Error', result.error); return; }
   document.getElementById('current-password').value = '';
   document.getElementById('new-password').value     = '';
   document.getElementById('confirm-password').value = '';
@@ -709,11 +1059,9 @@ async function addCustomQuote() {
   if (!state.sessionUnlocked) { showModal('unlock'); return; }
   const text   = document.getElementById('quote-text').value.trim();
   const author = document.getElementById('quote-author').value.trim();
-  if (!text) return alert('Enter a quote.');
-
+  if (!text) return showAlert('Missing Text', 'Enter a quote.', '💬');
   const result = await send({ type: 'ADD_CUSTOM_QUOTE', quote: { text, author: author || 'Unknown' } });
-  if (result.error) { alert(result.error); return; }
-
+  if (result.error) { showAlert('Error', result.error); return; }
   state.customQuotes = result.customQuotes;
   document.getElementById('quote-text').value   = '';
   document.getElementById('quote-author').value = '';
@@ -723,7 +1071,7 @@ async function addCustomQuote() {
 async function removeCustomQuote(index) {
   if (!state.sessionUnlocked) { showModal('unlock'); return; }
   const result = await send({ type: 'REMOVE_CUSTOM_QUOTE', index });
-  if (result.error) { alert(result.error); return; }
+  if (result.error) { showAlert('Error', result.error); return; }
   state.customQuotes = result.customQuotes;
   renderCustomQuotes();
 }
@@ -732,19 +1080,14 @@ function renderCustomQuotes() {
   const list   = document.getElementById('quote-list');
   const quotes = state.customQuotes || [];
   list.innerHTML = '';
-
   if (quotes.length === 0) {
     list.innerHTML = '<div style="font-size:11px;color:var(--text-muted);padding:8px 0">No custom quotes added yet.</div>';
     return;
   }
-
   quotes.forEach((q, i) => {
     const item = document.createElement('div');
     item.className = 'quote-item';
-    item.innerHTML = `
-      <div class="quote-item-text"><em>${escapeHtml(q.text)}</em> — ${escapeHtml(q.author)}</div>
-      <button title="Remove">✕</button>
-    `;
+    item.innerHTML = `<div class="quote-item-text"><em>${escapeHtml(q.text)}</em> — ${escapeHtml(q.author)}</div><button title="Remove">✕</button>`;
     item.querySelector('button').addEventListener('click', () => removeCustomQuote(i));
     list.appendChild(item);
   });
@@ -759,6 +1102,7 @@ function setupLockButton() {
     await send({ type: 'LOCK_SESSION' });
     state.sessionUnlocked = false;
     sitesRevealed = false;
+    currentListId = null;
     pendingPasswordCallback = null;
     renderUI();
   });
@@ -789,44 +1133,43 @@ function showConfirm(title, body, onConfirm) {
   showModal('confirm');
 }
 
-function setupModalButtons() {
+function showAlert(title, body, icon = '⚠️') {
+  document.getElementById('alert-icon').textContent  = icon;
+  document.getElementById('alert-title').textContent = title;
+  document.getElementById('alert-body').textContent  = body;
+  showModal('alert');
+}
 
-  // ── Setup password ───────────────────────────────────────────
+function setupModalButtons() {
+  // Alert "Got it"
+  document.getElementById('btn-alert-ok').addEventListener('click', hideModal);
+
+  // Setup password
   document.getElementById('btn-setup-submit').addEventListener('click', async () => {
     const pw1 = document.getElementById('setup-pw1').value;
     const pw2 = document.getElementById('setup-pw2').value;
     const err = document.getElementById('setup-error');
     err.classList.remove('visible');
-
     if (!pw1)           { showError(err, 'Please enter a password.'); return; }
     if (pw1.length < 4) { showError(err, 'Password must be at least 4 characters.'); return; }
     if (pw1 !== pw2)    { showError(err, 'Passwords do not match.'); return; }
-
     const result = await send({ type: 'SETUP_PASSWORD', password: pw1 });
     if (result.error)   { showError(err, result.error); return; }
-
-    state.hasPassword     = true;
-    state.sessionUnlocked = true;
+    state.hasPassword = true; state.sessionUnlocked = true;
     await refreshState();
     renderUI();
   });
-
   ['setup-pw1', 'setup-pw2'].forEach(id => {
-    document.getElementById(id).addEventListener('keydown', e => {
-      if (e.key === 'Enter') document.getElementById('btn-setup-submit').click();
-    });
+    document.getElementById(id).addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('btn-setup-submit').click(); });
   });
 
-  // ── Unlock session ───────────────────────────────────────────
+  // Unlock
   document.getElementById('btn-unlock-submit').addEventListener('click', async () => {
     const pw  = document.getElementById('unlock-pw').value;
     const err = document.getElementById('unlock-error');
     err.classList.remove('visible');
-
     if (!pw) { showError(err, 'Enter your password.'); return; }
-
     const result = await send({ type: 'VERIFY_PASSWORD', password: pw });
-
     if (result.success) {
       state.sessionUnlocked = true;
       await refreshState();
@@ -837,67 +1180,49 @@ function setupModalButtons() {
       showError(err, `Incorrect password. ${result.attemptsRemaining} attempt(s) remaining.`);
     }
   });
-
-  document.getElementById('unlock-pw').addEventListener('keydown', e => {
-    if (e.key === 'Enter') document.getElementById('btn-unlock-submit').click();
-  });
-
+  document.getElementById('unlock-pw').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('btn-unlock-submit').click(); });
   document.getElementById('btn-unlock-forgot').addEventListener('click', () => showModal('forgot'));
 
-  // ── Forgot / reset ───────────────────────────────────────────
+  // Forgot
   document.getElementById('btn-forgot-cancel').addEventListener('click',  () => showModal('unlock'));
   document.getElementById('btn-forgot-confirm').addEventListener('click', async () => {
     await send({ type: 'RESET_ALL' });
-    sitesRevealed = false;
+    sitesRevealed = false; currentListId = null;
     await refreshState();
     renderUI();
   });
 
-  // ── Generic confirm (yes/no) ─────────────────────────────────
-  document.getElementById('btn-confirm-cancel').addEventListener('click', () => {
-    confirmCallback = null;
-    hideModal();
-  });
+  // Generic confirm
+  document.getElementById('btn-confirm-cancel').addEventListener('click', () => { confirmCallback = null; hideModal(); });
   document.getElementById('btn-confirm-ok').addEventListener('click', async () => {
     hideModal();
     if (confirmCallback) { const cb = confirmCallback; confirmCallback = null; await cb(); }
   });
 
-  // ── Password-confirm modal (reveal + schedule + other actions) ──
+  // Password-confirm modal (reveal + schedule + etc.)
   document.getElementById('btn-reveal-submit').addEventListener('click', async () => {
     const pw  = document.getElementById('reveal-pw').value;
     const err = document.getElementById('reveal-error');
     err.classList.remove('visible');
-
     if (!pw) { showError(err, 'Enter your password.'); return; }
-
     const result = await send({ type: 'VERIFY_PASSWORD', password: pw });
-
     if (result.success) {
       hideModal();
-      if (pendingPasswordCallback) {
-        const cb = pendingPasswordCallback;
-        pendingPasswordCallback = null;
-        await cb();
-      }
+      if (pendingPasswordCallback) { const cb = pendingPasswordCallback; pendingPasswordCallback = null; await cb(); }
     } else if (result.locked) {
       showError(err, `Too many failed attempts. Locked for ${result.remainingMinutes} minute(s).`);
     } else {
       showError(err, `Incorrect password. ${result.attemptsRemaining} attempt(s) remaining.`);
     }
   });
-
-  document.getElementById('reveal-pw').addEventListener('keydown', e => {
-    if (e.key === 'Enter') document.getElementById('btn-reveal-submit').click();
-  });
-
+  document.getElementById('reveal-pw').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('btn-reveal-submit').click(); });
   document.getElementById('btn-reveal-cancel').addEventListener('click', () => {
     pendingPasswordCallback = null;
     document.getElementById('reveal-pw').value = '';
     hideModal();
   });
 
-  // ── Import domains ───────────────────────────────────────────
+  // Import
   document.getElementById('btn-import-cancel').addEventListener('click', () => {
     document.getElementById('import-textarea').value = '';
     document.getElementById('import-error').classList.remove('visible');
@@ -905,22 +1230,25 @@ function setupModalButtons() {
   });
   document.getElementById('btn-import-submit').addEventListener('click', importBlocklist);
 
-  // ── Context menu pending ─────────────────────────────────────
+  // Context menu pending
   document.getElementById('btn-ctx-cancel').addEventListener('click', async () => {
     await send({ type: 'CLEAR_PENDING_CONTEXT_MENU' });
     state.pendingContextMenuDomain = null;
     hideModal();
   });
   document.getElementById('btn-ctx-confirm').addEventListener('click', async () => {
-    const btn      = document.getElementById('btn-ctx-confirm');
+    const btn       = document.getElementById('btn-ctx-confirm');
     const isUnblock = btn.dataset.ctxUnblock === '1';
-    const result   = await send({
-      type: isUnblock ? 'REMOVE_PENDING_CONTEXT_MENU_SITE' : 'ADD_PENDING_CONTEXT_MENU_SITE'
-    });
-    if (result.error) { alert(result.error); return; }
-    state.blocklist = result.blocklist || state.blocklist;
+    const ctxListRow = document.getElementById('ctx-list-row');
+    const listId = (!isUnblock && ctxListRow.style.display !== 'none')
+      ? document.getElementById('ctx-list-select').value
+      : null;
+    const result    = await send({ type: isUnblock ? 'REMOVE_PENDING_CONTEXT_MENU_SITE' : 'ADD_PENDING_CONTEXT_MENU_SITE', listId });
+    if (result.error) { showAlert('Error', result.error); return; }
+    state.blockLists = result.blockLists || state.blockLists;
     state.pendingContextMenuDomain = null;
     hideModal();
+    renderListManagement();
     renderSitesList();
     renderHeader();
   });
@@ -930,13 +1258,37 @@ function setupModalButtons() {
 // CONTEXT MENU PENDING
 // ─────────────────────────────────────────────────────────────
 
+function isDomainBlockedLocally(domain) {
+  return (state.blockLists || []).some(l => (l.sites || []).includes(domain));
+}
+
 function handlePendingContextMenu() {
   const pending = state.pendingContextMenuDomain;
   if (!pending) return;
-  const isBlocked = (state.blocklist || []).includes(pending);
+  const isBlocked = isDomainBlockedLocally(pending);
+  const lists     = state.blockLists || [];
+  const multiList = lists.length >= 2;
+
   document.getElementById('ctx-pending-msg').textContent = isBlocked
-    ? `You right-clicked "${pending}" which is currently blocked. Remove it from your blocklist?`
-    : `You right-clicked to block "${pending}". Add it to your blocklist now?`;
+    ? `You right-clicked "${pending}" which is currently blocked. Remove it from all your block lists?`
+    : `You right-clicked to block "${pending}". Add it to your block lists now?`;
+
+  // Show list picker only when blocking (not unblocking) and 2+ lists exist
+  const ctxListRow    = document.getElementById('ctx-list-row');
+  const ctxListSelect = document.getElementById('ctx-list-select');
+  if (!isBlocked && multiList) {
+    ctxListSelect.innerHTML = '';
+    lists.forEach(l => {
+      const opt = document.createElement('option');
+      opt.value = l.id;
+      opt.textContent = l.name + ` (${(l.sites || []).length})`;
+      ctxListSelect.appendChild(opt);
+    });
+    ctxListRow.style.display = 'block';
+  } else {
+    ctxListRow.style.display = 'none';
+  }
+
   const confirmBtn = document.getElementById('btn-ctx-confirm');
   confirmBtn.textContent        = isBlocked ? 'Unblock It' : 'Block It';
   confirmBtn.dataset.ctxUnblock = isBlocked ? '1' : '0';
@@ -947,10 +1299,7 @@ function handlePendingContextMenu() {
 // HELPERS
 // ─────────────────────────────────────────────────────────────
 
-function showError(el, msg) {
-  el.textContent = msg;
-  el.classList.add('visible');
-}
+function showError(el, msg) { el.textContent = msg; el.classList.add('visible'); }
 
 function flashButton(id, label) {
   const btn  = document.getElementById(id);
@@ -961,9 +1310,5 @@ function flashButton(id, label) {
 }
 
 function escapeHtml(str) {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
