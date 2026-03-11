@@ -540,7 +540,9 @@ async function updateContextMenuForTab(tabId) {
   const isBlocked = isDomainBlocked(lists, domain);
   chrome.contextMenus.update('blockSite', { title: isBlocked ? 'Unblock this website' : 'Block this website' });
 
-  if (!isBlocked && lists.length >= 2) {
+  const { showPrivateLists = false } = await getLocal('showPrivateLists');
+  const visibleLists = showPrivateLists ? lists : lists.filter(l => !l.isPrivate);
+  if (!isBlocked && visibleLists.length >= 2) {
     await _buildCtxSubmenu(lists);
   } else {
     await _removeCtxSubmenu();
