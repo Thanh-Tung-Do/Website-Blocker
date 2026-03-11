@@ -85,7 +85,7 @@ Branch: `master`
 > Full feature ideas with implementation notes: `D:\Obsidian Vault\Ryansim\Website Blocker — Feature Ideas.md`
 
 ## Developer notes
-- Node.js not available on this machine — use Python (`python -c "..."`) for any build scripts
+- Node.js v24.14.0 / npm 11.9.0 available on this machine
 - Always reload the unpacked extension in `chrome://extensions` after `background.js` changes
 - Popup/UI file changes (popup.html, popup.js, blocked.html, etc.) take effect on next popup open — no reload needed
 - Push to GitHub after every meaningful change set
