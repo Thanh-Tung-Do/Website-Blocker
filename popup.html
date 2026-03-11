@@ -488,7 +488,6 @@
     <button class="tab-btn" data-tab="block">Block</button>
     <button class="tab-btn" data-tab="schedule">Schedule</button>
     <button class="tab-btn" data-tab="pomodoro">Pomodoro</button>
-    <button class="tab-btn" data-tab="hard">Hard Mode</button>
     <button class="tab-btn" data-tab="settings">Settings</button>
   </div>
 
@@ -543,7 +542,7 @@
     </div>
   </div>
 
-  <!-- ─── ALWAYS BLOCK TAB ─── -->
+  <!-- ─── BLOCK TAB ─── -->
   <div class="tab-panel" id="tab-block">
     <div class="ab-card" id="ab-card">
       <div class="ab-card-info">
@@ -559,6 +558,53 @@
       <div class="mode-lists-label">Apply to:</div>
       <div class="no-list-warning" id="ab-no-list-warning">⚠ No list selected: nothing is being blocked!</div>
       <div class="list-chips-row" id="ab-list-chips"></div>
+    </div>
+
+    <div class="divider"></div>
+
+    <!-- Hard Mode (idle) -->
+    <div id="hard-idle">
+      <div class="hard-intro">
+        <div class="hard-intro-icon">🔥</div>
+        <div>
+          <div class="hard-intro-title">Hard Mode</div>
+          <div class="hard-intro-sub">Once started, blocking is locked for the full duration. No toggle, no schedule bypass, no escape — not even with your password.</div>
+        </div>
+      </div>
+
+      <div class="settings-grid">
+        <div>
+          <label for="hard-hours">Hours</label>
+          <input type="number" id="hard-hours" min="0" max="23" value="0" />
+        </div>
+        <div>
+          <label for="hard-minutes">Minutes</label>
+          <input type="number" id="hard-minutes" min="0" max="59" value="30" />
+        </div>
+      </div>
+
+      <div class="mode-lists-row" id="hard-list-row" style="display:none">
+        <div class="mode-lists-label">Block lists:</div>
+        <div class="no-list-warning" id="hard-no-list-warning">⚠ No list selected: nothing will be blocked!</div>
+        <div class="list-chips-row" id="hard-list-chips"></div>
+      </div>
+      <button class="btn btn-danger btn-full" id="btn-hard-start">🔥 Start Hard Mode</button>
+
+      <p style="font-size:11px; color:var(--text-muted); line-height:1.5; margin:0">
+        Hard Mode overrides Always Block, Schedule, and Pomodoro. You cannot stop it early under any circumstances.
+      </p>
+    </div>
+
+    <!-- Hard Mode active -->
+    <div id="hard-active" style="display:none">
+      <div class="hard-active-card">
+        <div class="hard-active-label">🔥 Hard Mode Active</div>
+        <div class="hard-active-countdown" id="hard-countdown">--:--:--</div>
+        <div class="hard-active-sub">until blocking can be changed</div>
+      </div>
+      <p style="font-size:11px; color:var(--text-muted); line-height:1.5; text-align:center; margin:0">
+        All blocking controls are locked. Hang in there — you've got this.
+      </p>
     </div>
   </div>
 
@@ -658,56 +704,6 @@
       <div class="list-chips-row" id="pomo-list-chips"></div>
     </div>
     <button class="btn btn-ghost btn-full" id="btn-save-pomo">Save Settings</button>
-  </div>
-
-  <!-- ─── HARD MODE TAB ─── -->
-  <div class="tab-panel" id="tab-hard">
-
-    <!-- Idle state -->
-    <div id="hard-idle">
-      <div class="hard-intro">
-        <div class="hard-intro-icon">🔥</div>
-        <div>
-          <div class="hard-intro-title">Hard Mode</div>
-          <div class="hard-intro-sub">Once started, blocking is locked for the full duration. No toggle, no schedule bypass, no escape — not even with your password.</div>
-        </div>
-      </div>
-
-      <div class="settings-grid">
-        <div>
-          <label for="hard-hours">Hours</label>
-          <input type="number" id="hard-hours" min="0" max="23" value="0" />
-        </div>
-        <div>
-          <label for="hard-minutes">Minutes</label>
-          <input type="number" id="hard-minutes" min="0" max="59" value="30" />
-        </div>
-      </div>
-
-      <div class="mode-lists-row" id="hard-list-row" style="display:none">
-        <div class="mode-lists-label">Block lists:</div>
-        <div class="no-list-warning" id="hard-no-list-warning">⚠ No list selected: nothing will be blocked!</div>
-        <div class="list-chips-row" id="hard-list-chips"></div>
-      </div>
-      <button class="btn btn-danger btn-full" id="btn-hard-start">🔥 Start Hard Mode</button>
-
-      <p style="font-size:11px; color:var(--text-muted); line-height:1.5; margin:0">
-        Hard Mode overrides Always Block, Schedule, and Pomodoro. You cannot stop it early under any circumstances.
-      </p>
-    </div>
-
-    <!-- Active state (shown when hard mode is running) -->
-    <div id="hard-active" style="display:none">
-      <div class="hard-active-card">
-        <div class="hard-active-label">🔥 Hard Mode Active</div>
-        <div class="hard-active-countdown" id="hard-countdown">--:--:--</div>
-        <div class="hard-active-sub">until blocking can be changed</div>
-      </div>
-      <p style="font-size:11px; color:var(--text-muted); line-height:1.5; text-align:center; margin:0">
-        All blocking controls are locked. Hang in there — you've got this.
-      </p>
-    </div>
-
   </div>
 
   <!-- ─── SETTINGS TAB ─── -->

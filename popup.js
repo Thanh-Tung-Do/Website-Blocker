@@ -46,11 +46,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupSitesTab();
   setupScheduleTab();
   setupPomodoroTab();
-  setupHardModeTab();
   setupSettingsTab();
   setupModalButtons();
   setupLockButton();
   setupAlwaysBlockTab();
+  setupHardModeTab();
   renderUI();
 });
 
@@ -72,7 +72,6 @@ function renderUI() {
   renderAlwaysBlockTab();
   renderScheduleTab();
   renderPomodoroTab();
-  renderHardModeTab();
   renderSettingsTab();
   handlePendingContextMenu();
 }
@@ -185,6 +184,8 @@ function renderAlwaysBlockTab() {
       }
     });
   }
+
+  renderHardModeTab();
 }
 
 // ─────────────────────────────────────────────────────────────
