@@ -725,6 +725,24 @@ async function handleMessage(message) {
 
     case 'SET_SHOW_PRIVATE_LISTS': {
       await chrome.storage.local.set({ showPrivateLists: !!message.enabled });
+
+      // When hiding private lists: if only 1 non-private list remains and a mode's
+      // listIds is empty [], auto-restore it to ['__all__'] so that single list blocks normally.
+      if (!message.enabled) {
+        const allLists = (await getDecryptedBlockLists()) || [];
+        const visibleCount = allLists.filter(l => !l.isPrivate).length;
+        if (visibleCount === 1) {
+          const fix = ids => (!ids || ids.length === 0) ? ['__all__'] : ids;
+          const { alwaysBlockLists, schedules = [], pomodoroSettings = {} } =
+            await getLocal(['alwaysBlockLists', 'schedules', 'pomodoroSettings']);
+          await chrome.storage.local.set({
+            alwaysBlockLists: fix(alwaysBlockLists),
+            schedules:        schedules.map(s => ({ ...s, lists: fix(s.lists) })),
+            pomodoroSettings: { ...pomodoroSettings, lists: fix(pomodoroSettings.lists) }
+          });
+        }
+      }
+
       await updateBlockingRules();
       await updateBadge();
       if (!message.enabled) await redirectBlockedTabs(await getActiveDomainsForRedirect());
@@ -739,6 +757,24 @@ async function handleMessage(message) {
       const key = await hexToKey(sessionEncKey);
       const newLists = lists.map(l => l.id === message.id ? { ...l, isPrivate: !!message.isPrivate } : l);
       await saveBlockLists(newLists, key);
+
+      // If making a list private reduces visible lists to 1 and showPrivateLists is off,
+      // auto-restore any empty mode listIds to ['__all__'].
+      const { showPrivateLists = false } = await getLocal('showPrivateLists');
+      if (message.isPrivate && !showPrivateLists) {
+        const visibleCount = newLists.filter(l => !l.isPrivate).length;
+        if (visibleCount === 1) {
+          const fix = ids => (!ids || ids.length === 0) ? ['__all__'] : ids;
+          const { alwaysBlockLists, schedules = [], pomodoroSettings = {} } =
+            await getLocal(['alwaysBlockLists', 'schedules', 'pomodoroSettings']);
+          await chrome.storage.local.set({
+            alwaysBlockLists: fix(alwaysBlockLists),
+            schedules:        schedules.map(s => ({ ...s, lists: fix(s.lists) })),
+            pomodoroSettings: { ...pomodoroSettings, lists: fix(pomodoroSettings.lists) }
+          });
+        }
+      }
+
       await updateBlockingRules();
       refreshCtxMenuForActiveTab();
       return { success: true, blockLists: newLists };
