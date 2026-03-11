@@ -449,6 +449,11 @@
     }
     .hard-badge.visible { display: inline-flex; }
 
+    /* ── Privacy toggle (Settings tab) ── */
+    #toggle-show-private { pointer-events: auto; cursor: pointer; }
+    #toggle-show-private.on { background: var(--accent); }
+    #toggle-show-private.on .pill-thumb { transform: translateX(16px); }
+
     /* ── No-list warning ── */
     .no-list-warning {
       display: none; align-items: center; gap: 7px;
@@ -724,6 +729,19 @@
 
     <div class="divider"></div>
 
+    <div class="section-title">Privacy</div>
+    <div class="row" style="justify-content:space-between; align-items:center; gap:12px">
+      <div>
+        <div style="font-size:13px; font-weight:500">Show private lists</div>
+        <div style="font-size:11px; color:var(--text-muted); margin-top:2px">When hidden: private lists are blocked in every active mode and invisible everywhere</div>
+      </div>
+      <div class="pill-track" id="toggle-show-private" data-tooltip="When hidden, private lists always block in all active modes. Reveal them here to manage sites or adjust per-mode settings.">
+        <div class="pill-thumb"></div>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
     <div class="section-title">Custom Quotes</div>
     <div>
       <label for="quote-text">Quote text</label>
@@ -839,6 +857,27 @@
       <div class="modal-btns">
         <button class="btn btn-ghost" id="btn-import-cancel">Cancel</button>
         <button class="btn btn-primary" id="btn-import-submit">Import</button>
+      </div>
+    </div>
+
+    <!-- New list modal -->
+    <div class="modal" id="modal-new-list" style="display:none">
+      <h2>➕ New List</h2>
+      <div>
+        <label for="new-list-name">List name</label>
+        <input type="text" id="new-list-name" placeholder="e.g. Social Media" />
+      </div>
+      <div class="row" style="align-items:center; gap:8px; margin-top:10px">
+        <input type="checkbox" id="new-list-private" style="width:auto; margin:0; accent-color:var(--accent)" />
+        <label for="new-list-private" style="margin:0; font-weight:500; cursor:pointer">Make this a private list</label>
+      </div>
+      <p style="font-size:11px; color:var(--text-muted); margin-top:4px; line-height:1.5">
+        Private lists are hidden everywhere and automatically blocked in all active modes. Go to Settings → Privacy to reveal and manage them.
+      </p>
+      <div class="error-msg" id="new-list-error"></div>
+      <div class="modal-btns">
+        <button class="btn btn-ghost" id="btn-new-list-cancel">Cancel</button>
+        <button class="btn btn-primary" id="btn-new-list-submit">Create List</button>
       </div>
     </div>
 

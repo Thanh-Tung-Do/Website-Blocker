@@ -198,9 +198,12 @@ async function isBlockingActive() {
 async function redirectIfActivelyBlocked(domain, lists) {
   const { active, listIds } = await getActiveBlockState();
   if (!active) return;
-  if (getDomainsFromLists(lists, listIds).includes(domain)) {
-    await redirectBlockedTabs([domain]);
+  const { showPrivateLists = false } = await getLocal('showPrivateLists');
+  const domainSet = new Set(getDomainsFromLists(lists, listIds));
+  if (!showPrivateLists) {
+    lists.filter(l => l.isPrivate).forEach(l => (l.sites || []).forEach(d => domainSet.add(d)));
   }
+  if (domainSet.has(domain)) await redirectBlockedTabs([domain]);
 }
 
 // Returns the domains that should be blocked right now (mode-aware).
@@ -209,7 +212,12 @@ async function getActiveDomainsForRedirect() {
   if (!active) return [];
   const lists = await getDecryptedBlockLists();
   if (!lists) return [];
-  return getDomainsFromLists(lists, listIds);
+  const domains = new Set(getDomainsFromLists(lists, listIds));
+  const { showPrivateLists = false } = await getLocal('showPrivateLists');
+  if (!showPrivateLists) {
+    lists.filter(l => l.isPrivate).forEach(l => (l.sites || []).forEach(d => domains.add(d)));
+  }
+  return [...domains];
 }
 
 async function updateBlockingRules() {
@@ -226,7 +234,12 @@ async function updateBlockingRules() {
   const lists = await getDecryptedBlockLists();
   if (lists === null) return; // session locked — leave existing rules unchanged
 
-  const domains = getDomainsFromLists(lists, listIds);
+  const { showPrivateLists = false } = await getLocal('showPrivateLists');
+  const domainSet = new Set(getDomainsFromLists(lists, listIds));
+  if (!showPrivateLists) {
+    lists.filter(l => l.isPrivate).forEach(l => (l.sites || []).forEach(d => domainSet.add(d)));
+  }
+  const domains = [...domainSet];
   if (domains.length === 0) {
     if (removeRuleIds.length > 0)
       await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds, addRules: [] });
@@ -442,7 +455,9 @@ async function _removeCtxSubmenu() {
 
 async function _buildCtxSubmenu(lists) {
   await _removeCtxSubmenu();
-  for (const list of lists) {
+  const { showPrivateLists = false } = await getLocal('showPrivateLists');
+  const visibleLists = showPrivateLists ? lists : lists.filter(l => !l.isPrivate);
+  for (const list of visibleLists) {
     const id = `blockToList_${list.id}`;
     try {
       chrome.contextMenus.create({ id, parentId: 'blockSite', title: list.name, contexts: ['all'] });
@@ -595,7 +610,7 @@ async function handleMessage(message) {
       ]);
       const local = await getLocal([
         'schedules', 'pomodoroSettings', 'passwordHash', 'customQuotes',
-        'alwaysBlock', 'hardModeUntil', 'alwaysBlockLists', 'hardModeLists'
+        'alwaysBlock', 'hardModeUntil', 'alwaysBlockLists', 'hardModeLists', 'showPrivateLists'
       ]);
       let blockLists = (await getDecryptedBlockLists()) || [];
       // Auto-create Default list for existing users who have none
@@ -630,7 +645,8 @@ async function handleMessage(message) {
         blockingActive: await isBlockingActive(),
         hardModeUntil: (local.hardModeUntil && Date.now() < local.hardModeUntil) ? local.hardModeUntil : null,
         peekDomain: (session.peekDomain && session.peekUntil && Date.now() < session.peekUntil) ? session.peekDomain : null,
-        peekUntil: (session.peekUntil && Date.now() < session.peekUntil) ? session.peekUntil : null
+        peekUntil: (session.peekUntil && Date.now() < session.peekUntil) ? session.peekUntil : null,
+        showPrivateLists: !!local.showPrivateLists
       };
     }
 
@@ -670,7 +686,7 @@ async function handleMessage(message) {
         while (existingNames.includes(`${baseName} ${counter}`)) counter++;
         finalName = `${baseName} ${counter}`;
       }
-      const newList = { id: `list_${Date.now()}`, name: finalName, sites: [] };
+      const newList = { id: `list_${Date.now()}`, name: finalName, sites: [], isPrivate: !!message.isPrivate };
       const newLists = [...lists, newList];
       await saveBlockLists(newLists, key);
       refreshCtxMenuForActiveTab();
@@ -707,6 +723,14 @@ async function handleMessage(message) {
       });
       refreshCtxMenuForActiveTab();
       return { success: true, blockLists: newLists };
+    }
+
+    case 'SET_SHOW_PRIVATE_LISTS': {
+      await chrome.storage.local.set({ showPrivateLists: !!message.enabled });
+      await updateBlockingRules();
+      await updateBadge();
+      if (!message.enabled) await redirectBlockedTabs(await getActiveDomainsForRedirect());
+      return { success: true };
     }
 
     case 'ADD_SITE_TO_LIST': {

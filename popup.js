@@ -29,6 +29,13 @@ let scheduleListIds  = ['__all__'];
 let pomodoroListIds  = ['__all__'];
 let hardModeListIds  = ['__all__'];
 
+// Returns only lists that should be visible in the UI (hides private lists when showPrivateLists is false)
+function visibleLists() {
+  const lists = state ? (state.blockLists || []) : [];
+  if (state && state.showPrivateLists) return lists;
+  return lists.filter(l => !l.isPrivate);
+}
+
 // ─────────────────────────────────────────────────────────────
 // INIT
 // ─────────────────────────────────────────────────────────────
@@ -125,7 +132,7 @@ function setupAlwaysBlockTab() {
 function renderAlwaysBlockTab() {
   const on         = !!state.alwaysBlock;
   const hardActive = !!(state.hardModeUntil && Date.now() < state.hardModeUntil);
-  const lists      = state.blockLists || [];
+  const lists      = visibleLists();
   const multiList  = lists.length >= 2;
 
   const card = document.getElementById('ab-card');
@@ -220,7 +227,7 @@ function renderListChips(containerId, activeListIds, onChangeFn) {
   const container = document.getElementById(containerId);
   if (!container) return;
   container.innerHTML = '';
-  const lists = state.blockLists || [];
+  const lists = visibleLists();
   // Treat as __all__ if the flag is set OR if every specific list is selected
   const allActive = activeListIds.includes('__all__') ||
     (lists.length > 0 && lists.every(l => activeListIds.includes(l.id)));
@@ -269,7 +276,7 @@ function renderListChips(containerId, activeListIds, onChangeFn) {
 
 // Re-render list chips for all mode tabs (called after lists change)
 function refreshAllModeChips() {
-  const multiList = (state.blockLists || []).length >= 2;
+  const multiList = visibleLists().length >= 2;
   renderAlwaysBlockTab();
   document.getElementById('sched-list-row').style.display = multiList ? 'flex' : 'none';
   if (multiList) {
@@ -339,8 +346,9 @@ function setupSitesTab() {
 
 // Syncs the list selector dropdown and related UI to current state.
 function renderListManagement() {
-  const lists = state.blockLists || [];
-  const multiList = lists.length >= 2;
+  const visible = visibleLists();
+  if (currentListId && !visible.find(l => l.id === currentListId)) currentListId = null;
+  const multiList = visible.length >= 2;
 
   // Show/hide list bar based on list count
   document.getElementById('list-bar').style.display = multiList ? 'flex' : 'none';
@@ -349,19 +357,19 @@ function renderListManagement() {
 
   if (!multiList) {
     // Auto-select the only list so Add is immediately usable
-    currentListId = lists.length === 1 ? lists[0].id : null;
+    currentListId = visible.length === 1 ? visible[0].id : null;
   } else {
     // Rebuild selector dropdown
     const selector = document.getElementById('list-selector');
     selector.innerHTML = '<option value="__all__">All Lists</option>';
-    lists.forEach(l => {
+    visible.forEach(l => {
       const opt = document.createElement('option');
       opt.value = l.id;
       opt.textContent = l.name + ` (${(l.sites || []).length})`;
       selector.appendChild(opt);
     });
 
-    if (currentListId && lists.find(l => l.id === currentListId)) {
+    if (currentListId && visible.find(l => l.id === currentListId)) {
       selector.value = currentListId;
     } else {
       currentListId = null;
@@ -380,24 +388,17 @@ function renderListManagement() {
   addBtn.disabled   = !currentListId;
   addInput.disabled = !currentListId;
   if (currentListId) {
-    const listName = lists.find(l => l.id === currentListId)?.name || 'list';
     addInput.placeholder = `e.g. reddit.com`;
   } else {
     addInput.placeholder = 'Select a list above to add sites';
   }
 }
 
-async function createList() {
-  const name = prompt('New list name:');
-  if (!name || !name.trim()) return;
-  const result = await send({ type: 'CREATE_LIST', name: name.trim() });
-  if (result.error) { showAlert('Error', result.error); return; }
-  state.blockLists = result.blockLists;
-  currentListId = result.newListId;
-  renderListManagement();
-  renderSitesList();
-  refreshAllModeChips();
-  updateImportListSelector();
+function createList() {
+  document.getElementById('new-list-name').value = '';
+  document.getElementById('new-list-private').checked = false;
+  document.getElementById('new-list-error').textContent = '';
+  showModal('new-list');
 }
 
 function renameList() {
@@ -489,20 +490,22 @@ function renderSitesList() {
   listContainer.style.display = 'block';
   listEl.innerHTML = '';
 
+  const revealedLists = visibleLists();
+
   if (currentListId === null) {
-    // Aggregate: all lists grouped by list name
-    if (allLists.length === 0) {
+    // Aggregate: visible lists grouped by list name
+    if (revealedLists.length === 0) {
       empty.style.display = 'block';
       empty.innerHTML = 'No lists yet.<br/>Click <strong>+ New List</strong> above to get started.';
       return;
     }
     let hasSites = false;
-    allLists.forEach(l => {
+    revealedLists.forEach(l => {
       if (!l.sites || l.sites.length === 0) return;
       hasSites = true;
       const header = document.createElement('div');
       header.className = 'list-group-header';
-      header.textContent = l.name;
+      header.textContent = l.name + (l.isPrivate ? ' 🔒' : '');
       listEl.appendChild(header);
       l.sites.forEach(domain => listEl.appendChild(createSiteItem(domain, l.id)));
     });
@@ -514,7 +517,7 @@ function renderSitesList() {
     }
   } else {
     // Specific list
-    const targetList = allLists.find(l => l.id === currentListId);
+    const targetList = revealedLists.find(l => l.id === currentListId) || allLists.find(l => l.id === currentListId);
     if (!targetList || (targetList.sites || []).length === 0) {
       empty.style.display = 'block';
       empty.innerHTML = 'No sites in this list yet.<br/>Add a domain above to get started.';
@@ -602,7 +605,7 @@ function doExport() {
 function updateImportListSelector() {
   const select = document.getElementById('import-list-select');
   if (!select) return;
-  const lists = state.blockLists || [];
+  const lists = visibleLists();
   select.innerHTML = '';
   if (lists.length === 0) {
     const opt = document.createElement('option');
@@ -719,7 +722,7 @@ function resetScheduleForm() {
     btn.classList.toggle('selected', selectedDays.has(parseInt(btn.dataset.day)));
   });
   document.getElementById('btn-cancel-schedule').style.display = 'none';
-  const schedMultiList = (state.blockLists || []).length >= 2;
+  const schedMultiList = visibleLists().length >= 2;
   document.getElementById('sched-list-row').style.display = schedMultiList ? 'flex' : 'none';
   if (schedMultiList) {
     renderListChips('schedule-list-chips', scheduleListIds, ids => {
@@ -783,7 +786,7 @@ function startEditSchedule(sched) {
   });
   document.getElementById('btn-cancel-schedule').style.display = 'inline-flex';
   document.getElementById('schedule-form').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  const schedMultiListEdit = (state.blockLists || []).length >= 2;
+  const schedMultiListEdit = visibleLists().length >= 2;
   document.getElementById('sched-list-row').style.display = schedMultiListEdit ? 'flex' : 'none';
   if (schedMultiListEdit) {
     renderListChips('schedule-list-chips', scheduleListIds, ids => {
@@ -861,7 +864,7 @@ function renderPomodoroTab() {
   document.getElementById('pomo-sessions').textContent = `Sessions completed: ${pomo.sessionCount || 0}`;
 
   pomodoroListIds = pomo.settings.lists || ['__all__'];
-  const pomoMultiList = (state.blockLists || []).length >= 2;
+  const pomoMultiList = visibleLists().length >= 2;
   document.getElementById('pomo-list-row').style.display = pomoMultiList ? 'flex' : 'none';
   if (pomoMultiList) {
     renderListChips('pomo-list-chips', pomodoroListIds, ids => {
@@ -980,7 +983,7 @@ function renderHardModeTab() {
     hardCountdownInterval = setInterval(tick, 500);
   } else {
     hardModeListIds = state.hardModeLists || ['__all__'];
-    const hardMultiList = (state.blockLists || []).length >= 2;
+    const hardMultiList = visibleLists().length >= 2;
     document.getElementById('hard-list-row').style.display = hardMultiList ? 'flex' : 'none';
     if (hardMultiList) {
       renderListChips('hard-list-chips', hardModeListIds, ids => {
@@ -1020,6 +1023,17 @@ async function startHardMode() {
 function setupSettingsTab() {
   document.getElementById('btn-change-pw').addEventListener('click', changePassword);
   document.getElementById('btn-add-quote').addEventListener('click', addCustomQuote);
+  document.getElementById('toggle-show-private').addEventListener('click', async () => {
+    if (!state.sessionUnlocked) { showModal('unlock'); return; }
+    const newVal = !state.showPrivateLists;
+    const result = await send({ type: 'SET_SHOW_PRIVATE_LISTS', enabled: newVal });
+    if (result.error) { showAlert('Error', result.error); return; }
+    state.showPrivateLists = newVal;
+    renderSettingsTab();
+    renderListManagement();
+    renderSitesList();
+    refreshAllModeChips();
+  });
   document.getElementById('btn-reset').addEventListener('click', () => {
     confirmWithPassword(
       '⚠️ Reset All Settings?',
@@ -1036,7 +1050,11 @@ function setupSettingsTab() {
   });
 }
 
-function renderSettingsTab() { renderCustomQuotes(); }
+function renderSettingsTab() {
+  renderCustomQuotes();
+  const pill = document.getElementById('toggle-show-private');
+  pill.classList.toggle('on', !!state.showPrivateLists);
+}
 
 async function changePassword() {
   if (!state.sessionUnlocked) { showModal('unlock'); return; }
@@ -1230,6 +1248,26 @@ function setupModalButtons() {
   });
   document.getElementById('btn-import-submit').addEventListener('click', importBlocklist);
 
+  // New list modal
+  document.getElementById('btn-new-list-cancel').addEventListener('click', hideModal);
+  document.getElementById('new-list-name').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') document.getElementById('btn-new-list-submit').click();
+  });
+  document.getElementById('btn-new-list-submit').addEventListener('click', async () => {
+    const name = document.getElementById('new-list-name').value.trim();
+    const isPrivate = document.getElementById('new-list-private').checked;
+    if (!name) { document.getElementById('new-list-error').textContent = 'Please enter a list name.'; return; }
+    const result = await send({ type: 'CREATE_LIST', name, isPrivate });
+    if (result.error) { document.getElementById('new-list-error').textContent = result.error; return; }
+    state.blockLists = result.blockLists;
+    currentListId = isPrivate && !state.showPrivateLists ? currentListId : result.newListId;
+    hideModal();
+    renderListManagement();
+    renderSitesList();
+    refreshAllModeChips();
+    updateImportListSelector();
+  });
+
   // Context menu pending
   document.getElementById('btn-ctx-cancel').addEventListener('click', async () => {
     await send({ type: 'CLEAR_PENDING_CONTEXT_MENU' });
@@ -1266,7 +1304,7 @@ function handlePendingContextMenu() {
   const pending = state.pendingContextMenuDomain;
   if (!pending) return;
   const isBlocked = isDomainBlockedLocally(pending);
-  const lists     = state.blockLists || [];
+  const lists     = visibleLists();
   const multiList = lists.length >= 2;
 
   document.getElementById('ctx-pending-msg').textContent = isBlocked
