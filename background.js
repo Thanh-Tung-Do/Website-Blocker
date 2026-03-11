@@ -104,20 +104,27 @@ async function legacyHash(password) {
 // BLOCK LISTS — encrypted storage
 // ─────────────────────────────────────────────────────────────
 
+// In-memory cache — avoids re-decrypting on every tab switch / context menu update.
+// Cleared on session lock or service worker restart (both are fine — will re-decrypt once).
+let _blockListsCache = null;
+
 // Returns [{id, name, sites[]}] or null if session locked / decryption fails.
 async function getDecryptedBlockLists() {
+  if (_blockListsCache !== null) return _blockListsCache;
   const { sessionEncKey } = await getSession('sessionEncKey');
   if (!sessionEncKey) return null;
   const { blockListsEncrypted, blockListsIV } = await getLocal(['blockListsEncrypted', 'blockListsIV']);
-  if (!blockListsEncrypted || !blockListsIV) return [];
+  if (!blockListsEncrypted || !blockListsIV) { _blockListsCache = []; return []; }
   try {
     const key = await hexToKey(sessionEncKey);
-    return await decryptJSON(blockListsIV, blockListsEncrypted, key);
+    _blockListsCache = await decryptJSON(blockListsIV, blockListsEncrypted, key);
+    return _blockListsCache;
   } catch { return null; }
 }
 
 // Encrypts and saves block lists array. Also refreshes blocking rules.
 async function saveBlockLists(lists, key) {
+  _blockListsCache = lists; // update cache immediately so next read is instant
   const { iv, data } = await encryptJSON(lists, key);
   await chrome.storage.local.set({ blockListsEncrypted: data, blockListsIV: iv });
   await updateBlockingRules();
@@ -633,6 +640,7 @@ async function handleMessage(message) {
     case 'VERIFY_PASSWORD': { return await verifyPassword(message.password); }
 
     case 'LOCK_SESSION': {
+      _blockListsCache = null;
       await chrome.storage.session.set({ sessionUnlocked: false });
       await chrome.storage.session.remove('sessionEncKey');
       return { success: true };
