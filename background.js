@@ -612,7 +612,8 @@ async function handleMessage(message) {
       ]);
       const local = await getLocal([
         'schedules', 'pomodoroSettings', 'passwordHash', 'customQuotes',
-        'alwaysBlock', 'hardModeUntil', 'alwaysBlockLists', 'showPrivateLists', 'useBuiltInQuotes'
+        'alwaysBlock', 'hardModeUntil', 'alwaysBlockLists', 'showPrivateLists',
+        'useBuiltInQuotes', 'disabledBuiltInQuotes', 'editedBuiltInQuotes'
       ]);
       let blockLists = (await getDecryptedBlockLists()) || [];
       // Auto-create Default list for existing users who have none
@@ -637,6 +638,8 @@ async function handleMessage(message) {
         schedules: local.schedules || [],
         customQuotes: local.customQuotes || [],
         useBuiltInQuotes: local.useBuiltInQuotes !== false,
+        disabledBuiltInQuotes: local.disabledBuiltInQuotes || [],
+        editedBuiltInQuotes: local.editedBuiltInQuotes || {},
         hasPassword: !!local.passwordHash,
         sessionUnlocked: !!session.sessionUnlocked,
         lockoutUntil: session.lockoutUntil || null,
@@ -942,6 +945,31 @@ async function handleMessage(message) {
     }
     case 'SET_USE_BUILT_IN_QUOTES': {
       await chrome.storage.local.set({ useBuiltInQuotes: !!message.enabled });
+      return { success: true };
+    }
+    case 'DISABLE_BUILTIN_QUOTE': {
+      if (!await isSessionUnlocked()) return { error: 'Session locked' };
+      const { disabledBuiltInQuotes = [] } = await getLocal('disabledBuiltInQuotes');
+      if (!disabledBuiltInQuotes.includes(message.originalText)) {
+        await chrome.storage.local.set({ disabledBuiltInQuotes: [...disabledBuiltInQuotes, message.originalText] });
+      }
+      return { success: true };
+    }
+    case 'EDIT_BUILTIN_QUOTE': {
+      if (!await isSessionUnlocked()) return { error: 'Session locked' };
+      const { editedBuiltInQuotes = {} } = await getLocal('editedBuiltInQuotes');
+      await chrome.storage.local.set({ editedBuiltInQuotes: { ...editedBuiltInQuotes, [message.originalText]: message.quote } });
+      return { success: true };
+    }
+    case 'RESTORE_BUILTIN_QUOTE': {
+      if (!await isSessionUnlocked()) return { error: 'Session locked' };
+      const [{ disabledBuiltInQuotes = [] }, { editedBuiltInQuotes = {} }] = await Promise.all([
+        getLocal('disabledBuiltInQuotes'), getLocal('editedBuiltInQuotes')
+      ]);
+      const newDisabled = disabledBuiltInQuotes.filter(t => t !== message.originalText);
+      const newEdited   = { ...editedBuiltInQuotes };
+      delete newEdited[message.originalText];
+      await chrome.storage.local.set({ disabledBuiltInQuotes: newDisabled, editedBuiltInQuotes: newEdited });
       return { success: true };
     }
 

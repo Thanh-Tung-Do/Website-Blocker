@@ -1136,15 +1136,33 @@ async function removeCustomQuote(index) {
   renderCustomQuotes();
 }
 
-let _editingQuoteIndex = -1;
-
-function editCustomQuote(index) {
+async function disableBuiltInQuote(originalText) {
   if (!state.sessionUnlocked) { showModal('unlock'); return; }
-  const q = (state.customQuotes || [])[index];
-  if (!q) return;
-  _editingQuoteIndex = index;
-  document.getElementById('edit-quote-text').value   = q.text;
-  document.getElementById('edit-quote-author').value = q.author;
+  const result = await send({ type: 'DISABLE_BUILTIN_QUOTE', originalText });
+  if (result.error) { showAlert('Error', result.error); return; }
+  state.disabledBuiltInQuotes = [...(state.disabledBuiltInQuotes || []), originalText];
+  renderCustomQuotes();
+}
+
+async function restoreBuiltInQuote(originalText) {
+  if (!state.sessionUnlocked) { showModal('unlock'); return; }
+  const result = await send({ type: 'RESTORE_BUILTIN_QUOTE', originalText });
+  if (result.error) { showAlert('Error', result.error); return; }
+  state.disabledBuiltInQuotes = (state.disabledBuiltInQuotes || []).filter(t => t !== originalText);
+  const edited = { ...(state.editedBuiltInQuotes || {}) };
+  delete edited[originalText];
+  state.editedBuiltInQuotes = edited;
+  renderCustomQuotes();
+}
+
+// _editingQuote: { isBuiltIn: bool, index?: number, originalText?: string }
+let _editingQuote = null;
+
+function openEditQuoteModal(q, meta) {
+  if (!state.sessionUnlocked) { showModal('unlock'); return; }
+  _editingQuote = meta;
+  document.getElementById('edit-quote-text').value        = q.text;
+  document.getElementById('edit-quote-author').value      = q.author;
   document.getElementById('edit-quote-error').textContent = '';
   showModal('edit-quote');
 }
@@ -1154,9 +1172,16 @@ async function saveEditedQuote() {
   const author = document.getElementById('edit-quote-author').value.trim();
   const errDiv = document.getElementById('edit-quote-error');
   if (!text) { errDiv.textContent = 'Quote text is required.'; return; }
-  const result = await send({ type: 'EDIT_CUSTOM_QUOTE', index: _editingQuoteIndex, quote: { text, author: author || 'Unknown' } });
-  if (result.error) { errDiv.textContent = result.error; return; }
-  state.customQuotes = result.customQuotes;
+
+  if (_editingQuote.isBuiltIn) {
+    const result = await send({ type: 'EDIT_BUILTIN_QUOTE', originalText: _editingQuote.originalText, quote: { text, author: author || 'Unknown' } });
+    if (result.error) { errDiv.textContent = result.error; return; }
+    state.editedBuiltInQuotes = { ...(state.editedBuiltInQuotes || {}), [_editingQuote.originalText]: { text, author: author || 'Unknown' } };
+  } else {
+    const result = await send({ type: 'EDIT_CUSTOM_QUOTE', index: _editingQuote.index, quote: { text, author: author || 'Unknown' } });
+    if (result.error) { errDiv.textContent = result.error; return; }
+    state.customQuotes = result.customQuotes;
+  }
   hideModal();
   renderCustomQuotes();
 }
@@ -1217,24 +1242,64 @@ function exportQuotes() {
 }
 
 function renderCustomQuotes() {
-  const list   = document.getElementById('quote-list');
-  const quotes = state.customQuotes || [];
+  const list              = document.getElementById('quote-list');
+  const customQuotes      = state.customQuotes || [];
+  const disabled          = new Set(state.disabledBuiltInQuotes || []);
+  const edited            = state.editedBuiltInQuotes || {};
+  const useBuiltIn        = state.useBuiltInQuotes !== false;
   list.innerHTML = '';
-  if (quotes.length === 0) {
-    list.innerHTML = '<div style="font-size:11px;color:var(--text-muted);padding:8px 0">No custom quotes yet.</div>';
-    return;
+
+  // Built-in quotes (only shown when "Include built-in quotes" is on)
+  if (useBuiltIn) {
+    BUILT_IN_QUOTES.forEach(orig => {
+      const isDisabled = disabled.has(orig.text);
+      const override   = edited[orig.text];
+      const display    = override || orig;
+      const isEdited   = !!override;
+
+      const item = document.createElement('div');
+      item.className = 'quote-item';
+      if (isDisabled) item.style.opacity = '0.4';
+      item.innerHTML = `
+        <span class="q-builtin">built-in</span>
+        <div class="quote-item-text"><em>${escapeHtml(display.text)}</em> — ${escapeHtml(display.author)}</div>
+        ${isEdited || isDisabled ? `<button class="q-btn q-restore" title="Restore original">↩</button>` : ''}
+        ${!isDisabled ? `<button class="q-btn" title="Edit">✎</button>` : ''}
+        <button class="q-btn q-del" title="${isDisabled ? 'Re-enable' : 'Remove'}">
+          ${isDisabled ? '＋' : '✕'}
+        </button>`;
+
+      if (isEdited || isDisabled) {
+        item.querySelector('.q-restore').addEventListener('click', () => restoreBuiltInQuote(orig.text));
+      }
+      if (!isDisabled) {
+        item.querySelector('.q-btn:not(.q-restore):not(.q-del)').addEventListener('click',
+          () => openEditQuoteModal(display, { isBuiltIn: true, originalText: orig.text }));
+      }
+      item.querySelector('.q-del').addEventListener('click', () =>
+        isDisabled ? restoreBuiltInQuote(orig.text) : disableBuiltInQuote(orig.text));
+
+      list.appendChild(item);
+    });
   }
-  quotes.forEach((q, i) => {
+
+  // Custom quotes
+  customQuotes.forEach((q, i) => {
     const item = document.createElement('div');
     item.className = 'quote-item';
     item.innerHTML = `
       <div class="quote-item-text"><em>${escapeHtml(q.text)}</em> — ${escapeHtml(q.author)}</div>
       <button class="q-btn" title="Edit">✎</button>
       <button class="q-btn q-del" title="Remove">✕</button>`;
-    item.querySelector('.q-btn:not(.q-del)').addEventListener('click', () => editCustomQuote(i));
+    item.querySelector('.q-btn:not(.q-del)').addEventListener('click',
+      () => openEditQuoteModal(q, { isBuiltIn: false, index: i }));
     item.querySelector('.q-del').addEventListener('click', () => removeCustomQuote(i));
     list.appendChild(item);
   });
+
+  if (list.children.length === 0) {
+    list.innerHTML = '<div style="font-size:11px;color:var(--text-muted);padding:8px 0">No quotes. Turn on "Include built-in quotes" or add custom ones below.</div>';
+  }
 }
 
 // ─────────────────────────────────────────────────────────────

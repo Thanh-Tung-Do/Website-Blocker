@@ -218,7 +218,7 @@
       padding-bottom: 6px; border-bottom: 1px solid var(--border);
     }
 
-    .quote-list { display: flex; flex-direction: column; gap: 6px; max-height: 200px; overflow-y: auto; }
+    .quote-list { display: flex; flex-direction: column; gap: 6px; max-height: 280px; overflow-y: auto; }
     .quote-item {
       background: var(--surface2); border-radius: var(--radius);
       padding: 7px 10px; display: flex; gap: 6px; align-items: flex-start;
@@ -231,6 +231,12 @@
     }
     .quote-item .q-btn:hover { color: var(--accent); }
     .quote-item .q-btn.q-del:hover { color: var(--danger); }
+    .quote-item .q-btn.q-restore { font-size: 11px; }
+    .q-builtin {
+      font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
+      color: var(--accent); border: 1px solid var(--accent); border-radius: 3px;
+      padding: 1px 4px; flex-shrink: 0; align-self: flex-start; margin-top: 1px;
+    }
     #import-quotes-textarea {
       width: 100%; background: var(--surface2); border: 1px solid var(--border);
       border-radius: var(--radius); color: var(--text); padding: 8px 10px;
@@ -946,6 +952,7 @@
     </div>
   </div>
 
+  <script src="quotes.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

@@ -21,9 +21,17 @@ function showBuiltInQuote() {
 function upgradeWithCustomQuote(state) {
   const customQuotes = state.customQuotes  || [];
   const useBuiltIn   = state.useBuiltInQuotes !== false;
-  const pool = [...(useBuiltIn ? BUILT_IN_QUOTES : []), ...customQuotes];
+  const disabled     = new Set(state.disabledBuiltInQuotes || []);
+  const edited       = state.editedBuiltInQuotes || {};
+
+  const builtIns = useBuiltIn
+    ? BUILT_IN_QUOTES
+        .filter(q => !disabled.has(q.text))
+        .map(q => edited[q.text] || q)
+    : [];
+
+  const pool = [...builtIns, ...customQuotes];
   if (pool.length === 0) {
-    // User opted out of built-ins and has no custom quotes — hide the quote section
     document.getElementById('quote-text').style.display   = 'none';
     document.getElementById('quote-author').style.display = 'none';
     return;
