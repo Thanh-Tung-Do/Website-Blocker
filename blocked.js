@@ -19,10 +19,15 @@ function showBuiltInQuote() {
 }
 
 function upgradeWithCustomQuote(state) {
-  const customQuotes  = state.customQuotes  || [];
-  const useBuiltIn    = state.useBuiltInQuotes !== false;
+  const customQuotes = state.customQuotes  || [];
+  const useBuiltIn   = state.useBuiltInQuotes !== false;
   const pool = [...(useBuiltIn ? BUILT_IN_QUOTES : []), ...customQuotes];
-  if (pool.length === 0) return; // keep the initial built-in shown as fallback
+  if (pool.length === 0) {
+    // User opted out of built-ins and has no custom quotes — hide the quote section
+    document.getElementById('quote-text').style.display   = 'none';
+    document.getElementById('quote-author').style.display = 'none';
+    return;
+  }
   renderQuote(pickRandom(pool));
 }
 
