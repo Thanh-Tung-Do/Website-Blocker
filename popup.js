@@ -1052,7 +1052,6 @@ function setupSettingsTab() {
   document.getElementById('btn-edit-quote-cancel').addEventListener('click', hideModal);
   document.getElementById('btn-edit-quote-save').addEventListener('click', saveEditedQuote);
   document.getElementById('toggle-builtin-quotes').addEventListener('click', async () => {
-    if (!state.sessionUnlocked) { showModal('unlock'); return; }
     const newVal = !(state.useBuiltInQuotes !== false);
     const result = await send({ type: 'SET_USE_BUILT_IN_QUOTES', enabled: newVal });
     if (result.error) { showAlert('Error', result.error); return; }

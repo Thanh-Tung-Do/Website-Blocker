@@ -458,10 +458,14 @@
     }
     .hard-badge.visible { display: inline-flex; }
 
-    /* ── Privacy toggle (Settings tab) ── */
-    #toggle-show-private { pointer-events: auto; cursor: pointer; }
+    /* ── Settings tab toggles ── */
+    #toggle-show-private,
+    #toggle-builtin-quotes { pointer-events: auto; cursor: pointer; }
     #toggle-show-private.on { background: var(--accent); }
-    #toggle-show-private.on .pill-thumb { transform: translateX(16px); }
+    #toggle-show-private.on .pill-thumb,
+    #toggle-builtin-quotes.on .pill-thumb { transform: translateX(16px); }
+    #toggle-show-private.on,
+    #toggle-builtin-quotes.on { background: var(--accent); }
 
     /* ── No-list warning ── */
     .no-list-warning {
