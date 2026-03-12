@@ -1244,14 +1244,12 @@ function exportQuotes() {
 function renderCustomQuotes() {
   const list              = document.getElementById('quote-list');
   const customQuotes      = state.customQuotes || [];
-  const disabled          = new Set(state.disabledBuiltInQuotes || []);
-  const edited            = state.editedBuiltInQuotes || {};
-  const useBuiltIn        = state.useBuiltInQuotes !== false;
+  const disabled = new Set(state.disabledBuiltInQuotes || []);
+  const edited   = state.editedBuiltInQuotes || {};
   list.innerHTML = '';
 
-  // Built-in quotes (only shown when "Include built-in quotes" is on)
-  if (useBuiltIn) {
-    BUILT_IN_QUOTES.forEach(orig => {
+  // Built-in quotes — always shown in the management list (toggle only affects the blocked page)
+  BUILT_IN_QUOTES.forEach(orig => {
       const isDisabled = disabled.has(orig.text);
       const override   = edited[orig.text];
       const display    = override || orig;
@@ -1281,7 +1279,6 @@ function renderCustomQuotes() {
 
       list.appendChild(item);
     });
-  }
 
   // Custom quotes
   customQuotes.forEach((q, i) => {
