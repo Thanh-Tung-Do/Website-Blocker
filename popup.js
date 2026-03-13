@@ -1044,7 +1044,9 @@ async function startHardMode() {
 
 function setupSettingsTab() {
   document.getElementById('btn-change-pw').addEventListener('click', changePassword);
-  document.getElementById('btn-add-quote').addEventListener('click', addCustomQuote);
+  document.getElementById('btn-manage-quotes').addEventListener('click', openManageQuotes);
+  document.getElementById('btn-manage-quotes-close').addEventListener('click', hideModal);
+  document.getElementById('btn-mq-add').addEventListener('click', addCustomQuote);
   document.getElementById('btn-import-quotes').addEventListener('click', openImportQuotes);
   document.getElementById('btn-export-quotes').addEventListener('click', exportQuotes);
   document.getElementById('btn-import-quotes-cancel').addEventListener('click', hideModal);
@@ -1093,7 +1095,6 @@ function setupSettingsTab() {
 }
 
 function renderSettingsTab() {
-  renderCustomQuotes();
   document.getElementById('toggle-show-private').classList.toggle('on', !!state.showPrivateLists);
   document.getElementById('toggle-builtin-quotes').classList.toggle('on', state.useBuiltInQuotes !== false);
 }
@@ -1115,16 +1116,23 @@ async function changePassword() {
   flashButton('btn-change-pw', 'Changed!');
 }
 
+function openManageQuotes() {
+  renderCustomQuotes();
+  document.getElementById('mq-quote-text').value   = '';
+  document.getElementById('mq-quote-author').value = '';
+  showModal('manage-quotes');
+}
+
 async function addCustomQuote() {
   if (!state.sessionUnlocked) { showModal('unlock'); return; }
-  const text   = document.getElementById('quote-text').value.trim();
-  const author = document.getElementById('quote-author').value.trim();
+  const text   = document.getElementById('mq-quote-text').value.trim();
+  const author = document.getElementById('mq-quote-author').value.trim();
   if (!text) return showAlert('Missing Text', 'Enter a quote.', '💬');
   const result = await send({ type: 'ADD_CUSTOM_QUOTE', quote: { text, author: author || 'Unknown' } });
   if (result.error) { showAlert('Error', result.error); return; }
   state.customQuotes = result.customQuotes;
-  document.getElementById('quote-text').value   = '';
-  document.getElementById('quote-author').value = '';
+  document.getElementById('mq-quote-text').value   = '';
+  document.getElementById('mq-quote-author').value = '';
   renderCustomQuotes();
 }
 
@@ -1224,7 +1232,6 @@ async function submitImportQuotes() {
   if (result.error) { errDiv.textContent = result.error; return; }
   state.customQuotes = result.customQuotes;
   hideModal();
-  renderCustomQuotes();
   showAlert('Imported!', `Added ${result.added} quote(s).${result.skipped > 0 ? ` ${result.skipped} duplicate(s) skipped.` : ''}`, '✅');
 }
 
@@ -1250,7 +1257,7 @@ function makeQuoteBtn(label, title, extraClass) {
 }
 
 function renderCustomQuotes() {
-  const list         = document.getElementById('quote-list');
+  const list         = document.getElementById('manage-quotes-list');
   const customQuotes = state.customQuotes || [];
   const disabled     = new Set(state.disabledBuiltInQuotes || []);
   const edited       = state.editedBuiltInQuotes || {};

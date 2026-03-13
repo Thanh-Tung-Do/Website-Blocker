@@ -770,12 +770,7 @@
         <div class="pill-thumb"></div>
       </div>
     </div>
-    <div class="quote-list" id="quote-list"></div>
-    <div style="display:flex;flex-direction:column;gap:6px;margin-top:10px">
-      <input type="text" id="quote-text" placeholder="Inspirational quote…" />
-      <input type="text" id="quote-author" placeholder="Author (optional)" />
-      <button class="btn btn-ghost btn-full" id="btn-add-quote">+ Add Quote</button>
-    </div>
+    <button class="btn btn-ghost btn-full" id="btn-manage-quotes">Manage Quotes</button>
 
     <div class="divider"></div>
 
@@ -905,6 +900,20 @@
     </div>
 
     <!-- Import quotes modal -->
+    <!-- Manage Quotes modal -->
+    <div class="modal" id="modal-manage-quotes" style="display:none">
+      <h2>Manage Quotes</h2>
+      <div id="manage-quotes-list" style="display:flex;flex-direction:column;gap:6px;max-height:260px;overflow-y:auto;margin-bottom:12px"></div>
+      <div style="border-top:1px solid var(--border);padding-top:12px;display:flex;flex-direction:column;gap:6px">
+        <input type="text" id="mq-quote-text" placeholder="Inspirational quote…" />
+        <input type="text" id="mq-quote-author" placeholder="Author (optional)" />
+        <button class="btn btn-ghost btn-full" id="btn-mq-add">+ Add Quote</button>
+      </div>
+      <div class="modal-btns" style="margin-top:10px">
+        <button class="btn btn-primary" id="btn-manage-quotes-close">Done</button>
+      </div>
+    </div>
+
     <div class="modal" id="modal-import-quotes" style="display:none">
       <h2>Import Quotes</h2>
       <p>Paste quotes below. Supported formats:<br>
