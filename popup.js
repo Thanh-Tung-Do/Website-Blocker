@@ -1241,61 +1241,89 @@ function exportQuotes() {
   URL.revokeObjectURL(url);
 }
 
+function makeQuoteBtn(label, title, extraClass) {
+  const btn = document.createElement('button');
+  btn.className = 'q-btn' + (extraClass ? ' ' + extraClass : '');
+  btn.title = title;
+  btn.textContent = label;
+  return btn;
+}
+
 function renderCustomQuotes() {
-  const list              = document.getElementById('quote-list');
-  const customQuotes      = state.customQuotes || [];
-  const disabled = new Set(state.disabledBuiltInQuotes || []);
-  const edited   = state.editedBuiltInQuotes || {};
+  const list         = document.getElementById('quote-list');
+  const customQuotes = state.customQuotes || [];
+  const disabled     = new Set(state.disabledBuiltInQuotes || []);
+  const edited       = state.editedBuiltInQuotes || {};
   list.innerHTML = '';
 
-  // Built-in quotes — always shown in the management list (toggle only affects the blocked page)
-  (typeof BUILT_IN_QUOTES !== 'undefined' ? BUILT_IN_QUOTES : []).forEach(orig => {
-      const isDisabled = disabled.has(orig.text);
-      const override   = edited[orig.text];
-      const display    = override || orig;
-      const isEdited   = !!override;
+  // Built-in quotes — always shown for management (toggle only affects the blocked page)
+  const builtIns = (typeof BUILT_IN_QUOTES !== 'undefined') ? BUILT_IN_QUOTES : [];
+  builtIns.forEach(orig => {
+    const isDisabled = disabled.has(orig.text);
+    const display    = edited[orig.text] || orig;
+    const isEdited   = !!edited[orig.text];
 
-      const item = document.createElement('div');
-      item.className = 'quote-item';
-      if (isDisabled) item.style.opacity = '0.4';
-      item.innerHTML = `
-        <span class="q-builtin">built-in</span>
-        <div class="quote-item-text"><em>${escapeHtml(display.text)}</em> — ${escapeHtml(display.author)}</div>
-        ${isEdited || isDisabled ? `<button class="q-btn q-restore" title="Restore original">↩</button>` : ''}
-        ${!isDisabled ? `<button class="q-btn" title="Edit">✎</button>` : ''}
-        <button class="q-btn q-del" title="${isDisabled ? 'Re-enable' : 'Remove'}">
-          ${isDisabled ? '＋' : '✕'}
-        </button>`;
+    const item    = document.createElement('div');
+    item.className = 'quote-item';
+    if (isDisabled) item.style.opacity = '0.4';
 
-      if (isEdited || isDisabled) {
-        item.querySelector('.q-restore').addEventListener('click', () => restoreBuiltInQuote(orig.text));
-      }
-      if (!isDisabled) {
-        item.querySelector('.q-btn:not(.q-restore):not(.q-del)').addEventListener('click',
-          () => openEditQuoteModal(display, { isBuiltIn: true, originalText: orig.text }));
-      }
-      item.querySelector('.q-del').addEventListener('click', () =>
-        isDisabled ? restoreBuiltInQuote(orig.text) : disableBuiltInQuote(orig.text));
+    const badge = document.createElement('span');
+    badge.className = 'q-builtin';
+    badge.textContent = 'built-in';
 
-      list.appendChild(item);
-    });
+    const textDiv = document.createElement('div');
+    textDiv.className = 'quote-item-text';
+    const em = document.createElement('em');
+    em.textContent = display.text;
+    textDiv.appendChild(em);
+    textDiv.appendChild(document.createTextNode(' \u2014 ' + display.author));
+
+    item.appendChild(badge);
+    item.appendChild(textDiv);
+
+    if (isEdited || isDisabled) {
+      const restoreBtn = makeQuoteBtn('\u21a9', 'Restore original', 'q-restore');
+      restoreBtn.addEventListener('click', () => restoreBuiltInQuote(orig.text));
+      item.appendChild(restoreBtn);
+    }
+    if (!isDisabled) {
+      const editBtn = makeQuoteBtn('\u270e', 'Edit');
+      editBtn.addEventListener('click', () => openEditQuoteModal(display, { isBuiltIn: true, originalText: orig.text }));
+      item.appendChild(editBtn);
+    }
+    const delBtn = makeQuoteBtn(isDisabled ? '+' : '\u2715', isDisabled ? 'Re-enable' : 'Remove', 'q-del');
+    delBtn.addEventListener('click', () => isDisabled ? restoreBuiltInQuote(orig.text) : disableBuiltInQuote(orig.text));
+    item.appendChild(delBtn);
+
+    list.appendChild(item);
+  });
 
   // Custom quotes
   customQuotes.forEach((q, i) => {
     const item = document.createElement('div');
     item.className = 'quote-item';
-    item.innerHTML = `
-      <div class="quote-item-text"><em>${escapeHtml(q.text)}</em> — ${escapeHtml(q.author)}</div>
-      <button class="q-btn" title="Edit">✎</button>
-      <button class="q-btn q-del" title="Remove">✕</button>`;
-    item.querySelector('.q-btn:not(.q-del)').addEventListener('click',
-      () => openEditQuoteModal(q, { isBuiltIn: false, index: i }));
-    item.querySelector('.q-del').addEventListener('click', () => removeCustomQuote(i));
+
+    const textDiv = document.createElement('div');
+    textDiv.className = 'quote-item-text';
+    const em = document.createElement('em');
+    em.textContent = q.text;
+    textDiv.appendChild(em);
+    textDiv.appendChild(document.createTextNode(' \u2014 ' + q.author));
+    item.appendChild(textDiv);
+
+    const editBtn = makeQuoteBtn('\u270e', 'Edit');
+    editBtn.addEventListener('click', () => openEditQuoteModal(q, { isBuiltIn: false, index: i }));
+    item.appendChild(editBtn);
+
+    const delBtn = makeQuoteBtn('\u2715', 'Remove', 'q-del');
+    delBtn.addEventListener('click', () => removeCustomQuote(i));
+    item.appendChild(delBtn);
+
     list.appendChild(item);
   });
 
   if (list.children.length === 0) {
-    list.innerHTML = '<div style="font-size:11px;color:var(--text-muted);padding:8px 0">No quotes. Turn on "Include built-in quotes" or add custom ones below.</div>';
+    list.innerHTML = '<div style="font-size:11px;color:var(--text-muted);padding:8px 0">No quotes. Add custom ones below.</div>';
   }
 }
 
