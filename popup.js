@@ -1249,7 +1249,7 @@ function renderCustomQuotes() {
   list.innerHTML = '';
 
   // Built-in quotes — always shown in the management list (toggle only affects the blocked page)
-  BUILT_IN_QUOTES.forEach(orig => {
+  (typeof BUILT_IN_QUOTES !== 'undefined' ? BUILT_IN_QUOTES : []).forEach(orig => {
       const isDisabled = disabled.has(orig.text);
       const override   = edited[orig.text];
       const display    = override || orig;

@@ -2,7 +2,7 @@
 // This array is intentionally standalone so it can be imported by blocked.js
 // and also referenced from the Settings tab in the popup.
 
-const BUILT_IN_QUOTES = [
+var BUILT_IN_QUOTES = [
   {
     text: "The successful warrior is the average man, with laser-like focus.",
     author: "Bruce Lee"
