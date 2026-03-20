@@ -140,8 +140,8 @@ function getDomainsFromLists(lists, listIds) {
 }
 
 // Returns true if domain is in any block list.
-function isDomainBlocked(lists, domain) {
-  return lists.some(l => (l.sites || []).includes(domain));
+function isDomainBlocked(lists, hostname) {
+  return lists.some(l => (l.sites || []).some(entry => domainMatchesEntry(hostname, entry)));
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -149,6 +149,25 @@ function isDomainBlocked(lists, domain) {
 // ─────────────────────────────────────────────────────────────
 
 function escapeRegex(str) { return str.replace(/[.+?^${}()|[\]\\]/g, '\\$&'); }
+
+// Converts a stored domain entry to a regexFilter string.
+// Wildcard entries like "amazon.*" match any TLD: amazon.com, amazon.co.uk, etc.
+function domainToRegex(domain) {
+  if (domain.endsWith('.*')) {
+    const base = escapeRegex(domain.slice(0, -2));
+    return `^https?://(?:[^/?#]*\\.)?${base}\\.[^/?#]+(?:[/?#].*)?$`;
+  }
+  return `^https?://(?:[^/?#]*\\.)?${escapeRegex(domain)}(?:[/?#].*)?$`;
+}
+
+// Returns true if a live hostname (e.g. "www.amazon.co.uk") matches a stored entry (e.g. "amazon.*").
+function domainMatchesEntry(hostname, entry) {
+  if (entry.endsWith('.*')) {
+    const base = entry.slice(0, -2);
+    return hostname.startsWith(base + '.') || hostname.includes('.' + base + '.');
+  }
+  return entry === hostname;
+}
 
 // Returns {active: bool, listIds: string[]} for the currently active blocking mode.
 async function getActiveBlockState() {
@@ -247,12 +266,27 @@ async function updateBlockingRules() {
   }
 
   const extId = chrome.runtime.id;
-  const addRules = domains.map((domain, index) => ({
-    id: index + 1,
-    priority: 1,
-    action: { type: 'redirect', redirect: { url: `chrome-extension://${extId}/blocked.html?site=${encodeURIComponent(domain)}` } },
-    condition: { regexFilter: `^https?://(?:[^/?#]*\\.)?${escapeRegex(domain)}(?:[/?#].*)?$`, resourceTypes: ['main_frame'] }
-  }));
+  const addRules = domains.map((domain, index) => {
+    if (domain.endsWith('.*')) {
+      // Wildcard: use regexSubstitution to pass the actual matched hostname to the blocked page
+      const base = escapeRegex(domain.slice(0, -2));
+      return {
+        id: index + 1,
+        priority: 1,
+        action: { type: 'redirect', redirect: { regexSubstitution: `chrome-extension://${extId}/blocked.html?site=\\1` } },
+        condition: {
+          regexFilter: `^https?://((?:[^/?#]*\\.)?${base}\\.[^/?#]*)(?:[/?#].*)?$`,
+          resourceTypes: ['main_frame']
+        }
+      };
+    }
+    return {
+      id: index + 1,
+      priority: 1,
+      action: { type: 'redirect', redirect: { url: `chrome-extension://${extId}/blocked.html?site=${encodeURIComponent(domain)}` } },
+      condition: { regexFilter: domainToRegex(domain), resourceTypes: ['main_frame'] }
+    };
+  });
 
   // Re-include peek allow rule if active
   const { peekDomain, peekUntil } = await getSession(['peekDomain', 'peekUntil']);
@@ -261,7 +295,7 @@ async function updateBlockingRules() {
       id: PEEK_RULE_ID,
       priority: 2,
       action: { type: 'allow' },
-      condition: { regexFilter: `^https?://(?:[^/?#]*\\.)?${escapeRegex(peekDomain)}(?:[/?#].*)?$`, resourceTypes: ['main_frame'] }
+      condition: { regexFilter: domainToRegex(peekDomain), resourceTypes: ['main_frame'] }
     });
   }
 
@@ -278,9 +312,13 @@ async function redirectBlockedTabs(domains) {
     if (!tab.url) continue;
     if (tab.url.startsWith(blockedPrefix) || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) continue;
     for (const domain of domains) {
-      const regex = new RegExp(`^https?://(?:[^/?#]*\\.)?${escapeRegex(domain)}(?:[/?#].*)?$`, 'i');
+      const regex = new RegExp(domainToRegex(domain), 'i');
       if (regex.test(tab.url)) {
-        try { await chrome.tabs.update(tab.id, { url: `${blockedPrefix}?site=${encodeURIComponent(domain)}` }); } catch {}
+        let displayDomain = domain;
+        if (domain.endsWith('.*')) {
+          try { displayDomain = new URL(tab.url).hostname; } catch {}
+        }
+        try { await chrome.tabs.update(tab.id, { url: `${blockedPrefix}?site=${encodeURIComponent(displayDomain)}` }); } catch {}
         break;
       }
     }
@@ -789,8 +827,10 @@ async function handleMessage(message) {
     case 'ADD_SITE_TO_LIST': {
       if (!await isSessionUnlocked()) return { error: 'Session locked' };
       const domainInput = (message.domain || '').trim().toLowerCase().replace(/^https?:\/\//i, '').replace(/\/.*$/, '');
-      if (!domainInput || !/^[a-z0-9]([a-z0-9\-\.]*[a-z0-9])?(\.[a-z]{2,})$/.test(domainInput)) {
-        return { error: 'Invalid domain format.' };
+      const wildcardValid = /^[a-z0-9][a-z0-9\-]*(\.[a-z0-9][a-z0-9\-]*)*\.\*$/.test(domainInput);
+      const normalValid   = /^[a-z0-9]([a-z0-9\-\.]*[a-z0-9])?(\.[a-z]{2,})$/.test(domainInput);
+      if (!domainInput || (!wildcardValid && !normalValid)) {
+        return { error: 'Invalid domain format. Use e.g. amazon.com or amazon.*' };
       }
       message = { ...message, domain: domainInput };
       const lists = (await getDecryptedBlockLists()) || [];
