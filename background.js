@@ -610,9 +610,10 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === 'pomodoro_phase_end') {
     await handlePomodoroAlarm();
   } else if (alarm.name === 'schedule_check') {
-    const rulesBefore = await chrome.declarativeNetRequest.getDynamicRules();
+    const rulesBefore = (await chrome.declarativeNetRequest.getDynamicRules()).filter(r => r.id !== PEEK_RULE_ID);
     await updateBlockingRules();
-    if (rulesBefore.length === 0 && await isBlockingActive()) {
+    const rulesAfter = (await chrome.declarativeNetRequest.getDynamicRules()).filter(r => r.id !== PEEK_RULE_ID);
+    if (rulesBefore.length === 0 && rulesAfter.length > 0) {
       await redirectBlockedTabs(await getActiveDomainsForRedirect());
     }
   } else if (alarm.name === 'peek_end') {
@@ -946,6 +947,9 @@ async function handleMessage(message) {
       if (!await isSessionUnlocked()) return { error: 'Session locked' };
       await chrome.storage.local.set({ schedules: message.schedules });
       await updateBlockingRules();
+      if (await isBlockingActive()) {
+        await redirectBlockedTabs(await getActiveDomainsForRedirect());
+      }
       return { success: true };
     }
 
